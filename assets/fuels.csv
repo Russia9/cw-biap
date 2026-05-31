@@ -1,0 +1,3 @@
+fuel,rho,R_st,k_st,T,P_ud,u-p_k
+polyurethane,1800,290,1.16,3300,246,2.29*p_k^(0.40)
+polybutadiene,1720,326,1.22,2790,230,1.74*p_k^(0.40)
