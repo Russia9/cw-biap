@@ -6,6 +6,54 @@ import pandas as pd
 G0 = 9.80665  # m/s²
 
 
+def _norm_label(s: str) -> str:
+    """Normalize a chart label: '2.0' → '2', 'lambda_p1' stays as-is."""
+    try:
+        f = float(s)
+        return str(int(f)) if f == int(f) else s
+    except ValueError:
+        return s
+
+
+def load_chart(path: str) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Load a multi-curve digitized chart CSV.
+
+    Format: row 0 = curve labels (one per column-pair), row 1 = X/Y headers,
+    remaining rows = data. Returns {label: (x_sorted, y)} for each curve.
+    """
+    raw_labels = (
+        pd.read_csv(path, header=None, nrows=1)
+        .iloc[0, ::2]
+        .dropna()
+        .astype(str)
+        .tolist()
+    )
+    labels = [_norm_label(s) for s in raw_labels]
+    data = pd.read_csv(path, header=1)
+    curves: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for i, label in enumerate(labels):
+        col = i * 2
+        x = data.iloc[:, col].dropna().astype(float).to_numpy()
+        y = data.iloc[:, col + 1].dropna().astype(float).to_numpy()
+        order = np.argsort(x)
+        curves[label] = (x[order], y[order])
+    return curves
+
+
+def interp_chart(path: str, key: str, x: float) -> float:
+    """1D interpolation at x within the named curve in a chart CSV."""
+    return float(np.interp(x, *load_chart(path)[key]))
+
+
+def interp_chart_2d(path: str, x: float, y: float) -> float:
+    """Bilinear interpolation: x within each curve, then y across numeric curve labels."""
+    curves = load_chart(path)
+    keyed = sorted((float(k), k) for k in curves)
+    label_vals = np.array([kv for kv, _ in keyed])
+    interped = np.array([float(np.interp(x, *curves[k])) for _, k in keyed])
+    return float(np.interp(y, label_vals, interped))
+
+
 def burn_rate(fuel, p_k, path="assets/fuels.csv"):
     """Return (u, rho*u) for a fuel at chamber pressure p_k.
 
@@ -23,32 +71,7 @@ def burn_rate(fuel, p_k, path="assets/fuels.csv"):
 
 
 def alpha_dv(rho_u, l_z, path="assets/chart-4-26-alpha.csv"):
-    """Return alpha_dv by interpolating chart 4-26.
-
-    Performs bilinear interpolation: first within each l_z curve over rho_u,
-    then across curves for the given l_z.
-    """
-    raw = pd.read_csv(path, header=1)
-    l_z_values = (
-        pd.read_csv(path, header=None, nrows=1)
-        .iloc[0, ::2]
-        .dropna()
-        .astype(int)
-        .tolist()
-    )
-
-    per_curve = {}
-    for i, lz in enumerate(l_z_values):
-        col = i * 2
-        x = raw.iloc[:, col].dropna().astype(float).to_numpy()
-        y = raw.iloc[:, col + 1].dropna().astype(float).to_numpy()
-        order = np.argsort(x)
-        per_curve[lz] = (x[order], y[order])
-
-    alpha_at_lz = {lz: float(np.interp(rho_u, *per_curve[lz])) for lz in l_z_values}
-    lz_arr = np.array(sorted(alpha_at_lz))
-    alpha_arr = np.array([alpha_at_lz[lz] for lz in lz_arr])
-    return float(np.interp(l_z, lz_arr, alpha_arr))
+    return interp_chart_2d(path, rho_u, l_z)
 
 
 def fuel_props(fuel, path="assets/fuels.csv"):
@@ -89,10 +112,16 @@ def l_coefficient(rho_u, p_idx, path="assets/chart-4-27-l.csv"):
 
     p_idx: 1, 2, or 3 — selects the lambda_p curve.
     """
-    raw = pd.read_csv(path, header=1)  # skip lambda_p row, use X/Y row
-    col = (p_idx - 1) * 2  # each curve occupies two columns
-    x, y = (
-        raw.iloc[:, col].dropna().astype(float),
-        raw.iloc[:, col + 1].dropna().astype(float),
-    )
-    return float(np.interp(rho_u, x, y))
+    return interp_chart(path, f"lambda_p{p_idx}", rho_u)
+
+
+def k0_from_k(k, path="assets/table-k-k0.csv"):
+    """Return K0 by linear interpolation from table 3.10."""
+    df = pd.read_csv(path)
+    return float(np.interp(k, df["k"].to_numpy(), df["K0"].to_numpy()))
+
+
+def load_materials(path="assets/materials.csv"):
+    """Return {id: value} of material properties from the materials table CSV."""
+    df = pd.read_csv(path)
+    return dict(zip(df["id"], df["value"].astype(float)))
