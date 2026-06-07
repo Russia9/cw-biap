@@ -46,6 +46,10 @@ STAGES = [
     {"p_k": 35, "p_a": 0.14, "fuel": "polyurethane", "d_m": 0.9, "mu_k": 0.65},
 ]
 
+# Payload carried by the top stage: warhead m_бч plus control unit m_ау (kg).
+M_BCH = 500
+M_AU = 120
+
 # -------------------------------------------------------------------
 # Material properties (assets/materials.csv)
 # -------------------------------------------------------------------
@@ -275,7 +279,7 @@ def emit_thrust() -> tuple[list[Thrust], float]:
     return thrust, P_ud_avg
 
 
-def emit_weights() -> None:
+def emit_weights() -> tuple[list[Weight], list[float]]:
     """Weight-coefficient section: per-stage equations and the K_i table."""
     section("Весовые коэффициенты")
     weight = [
@@ -302,17 +306,18 @@ def emit_weights() -> None:
     # N — same tail-section coefficient for every stage
     rows.append(param_row("$N_i$", [f"${N_TAIL:.4f}$" for _ in range(3)]))
     # K — engine coefficient: a_дв plus the guarantee fuel reserve
-    k_cells = [f"${weight[j].a_dv + a_omega_stages[j]:.4f}$" for j in range(3)]
-    rows.append(param_row("$K_i$", k_cells))
+    k_values = [weight[j].a_dv + a_omega_stages[j] for j in range(3)]
+    rows.append(param_row("$K_i$", [f"${v:.4f}$" for v in k_values]))
     param_table(rows)
     print()
 
     print(eq(f"a_(omega 3) = {A_OMEGA_3}"))
     print(eq(f"N_i = {N_TAIL}"))
     print()
+    return weight, k_values
 
 
-def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> None:
+def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> float:
     """Active-segment section: end-of-burn parameters, V_к and relative weights."""
     section("Параметры в конце активного участка")
     h_k = np.interp(L_FULL, TRAJ_RANGE, TRAJ_HK)
@@ -358,12 +363,106 @@ def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> None:
         )
     )
     print()
+    return mu_calc
+
+
+def emit_masses(
+    weight: list[Weight], k_values: list[float], mu_k: float, thrust: list[Thrust]
+) -> None:
+    """Subrocket masses (3.19/3.20), motor diameters (3.21), burn times (3.22),
+    thrust-to-weight (3.23) and the launch midsection load (3.24)."""
+    section("Массы и геометрия субракет")
+    n = len(STAGES)
+
+    # Burn rates u_i (mm/s) — same source as the weight section.
+    u = [burn_rate(s["fuel"], s["p_k"])[0] for s in STAGES]
+
+    # (3.19)/(3.20) Subrocket launch masses, computed top-down. The top stage
+    # carries the warhead+control unit; each lower stage carries the subrocket
+    # above it as payload (m_пн).
+    m0 = [0.0] * n
+    payload = [0.0] * n
+    for i in range(n - 1, -1, -1):
+        payload[i] = (M_BCH + M_AU) if i == n - 1 else m0[i + 1]
+        m0[i] = payload[i] / (1 - N_TAIL - (1 + k_values[i]) * mu_k)
+        denom_src = f"1 - {N_TAIL} - (1 + {k_values[i]:.4f}) dot {mu_k:.3f}"
+        num_src = f"({M_BCH} + {M_AU})" if i == n - 1 else f"{m0[i + 1]:.0f}"
+        print(eq(f'm_(0 {i + 1}) = {num_src}/({denom_src}) = {m0[i]:.0f} "кг"'))
+    print()
+
+    # (3.21) Motor diameters. ψ_i (table 3.11) excludes the relative charge
+    # elongation l̄_з, so l̄_з (chart 4-27, here w.l_z) enters explicitly.
+    d_m = []
+    for i in range(n):
+        w = weight[i]
+        d = (((1 - N_TAIL) * m0[i] - payload[i]) / ((1 + w.a_dv) * w.psi * w.l_z)) ** (
+            1 / 3
+        )
+        d_m.append(d)
+        print(
+            eq(
+                f"d_(м {i + 1}) = root(3, ((1 - {N_TAIL}) dot {m0[i]:.0f} - {payload[i]:.0f})"
+                f"/((1 + {w.a_dv:.4f}) dot {w.psi:.1f} dot {w.l_z:.1f}))"
+                f' = {d:.2f} "м"'
+            )
+        )
+    print()
+
+    # (3.22) Burn times: web thickness d_м(1-d̄_к)/2 over burn rate u_i, with u_i
+    # converted from mm/s to m/s.
+    dt = []
+    for i in range(n):
+        t = d_m[i] * (1 - D_K_BAR) / (2 * u[i] * 1e-3)
+        dt.append(t)
+        print(
+            eq(
+                f"Delta t_(к {i + 1}) = ({d_m[i]:.2f} dot (1 - {D_K_BAR}))"
+                f'/(2 dot {u[i]:.2f} dot 10^(-3)) = {t:.1f} "с"'
+            )
+        )
+    print()
+
+    # (3.23) Thrust-to-weight: stage 1 (atmospheric) uses the design specific
+    # thrust P_уд.р; upper stages use the vacuum value P_уд.п.
+    p_ud = [thrust[0].P_ud_r] + [thrust[i].P_ud_v for i in range(1, n)]
+    lam_sub = ["0"] + ['"п"'] * (n - 1)
+    lam = []
+    for i in range(n):
+        v = dt[i] / (mu_k * p_ud[i])
+        lam.append(v)
+        print(
+            eq(
+                f"lambda_({lam_sub[i]}{i + 1}) = {dt[i]:.1f}"
+                f"/({mu_k:.3f} dot {p_ud[i]:.2f}) = {v:.3f}"
+            )
+        )
+    print()
+
+    # (3.24) Initial transverse load on the rocket midsection (stage 1 only).
+    p_m1 = 4 * m0[0] / (math.pi * d_m[0] ** 2)
+    print(
+        eq(
+            f'P_("м"1) = (4 dot {m0[0]:.0f})/(pi dot {d_m[0]:.2f}^2)'
+            f' = {p_m1:.0f} "кг/м²"'
+        )
+    )
+    print()
+
+    rows = [
+        param_row("$m_(0 i)$, кг", m0, ".0f"),
+        param_row("$d_(м i)$, м", d_m, ".2f"),
+        param_row("$Delta t_(к i)$, с", dt, ".1f"),
+        param_row("$lambda_([0\\/п] i)$", lam, ".3f"),
+    ]
+    param_table(rows)
+    print()
 
 
 def main():
     thrust, P_ud_avg = emit_thrust()
-    emit_weights()
-    emit_trajectory(thrust, P_ud_avg)
+    weight, k_values = emit_weights()
+    mu_k = emit_trajectory(thrust, P_ud_avg)
+    emit_masses(weight, k_values, mu_k, thrust)
 
 
 if __name__ == "__main__":
