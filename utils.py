@@ -125,3 +125,12 @@ def load_materials(path="assets/materials.csv"):
     """Return {id: value} of material properties from the materials table CSV."""
     df = pd.read_csv(path)
     return dict(zip(df["id"], df["value"].astype(float)))
+
+
+def load_trajectory(path="assets/table-2.1.csv"):
+    """Return the burnout-trajectory reference table (2.1) as a DataFrame.
+
+    Columns: L (km), h_k (km), l_k (km), theta_k (deg), V_k (m/s),
+    Lv (km per m/s) — full flight range mapped to active-segment parameters.
+    """
+    return pd.read_csv(path)

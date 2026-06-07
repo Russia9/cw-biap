@@ -16,7 +16,7 @@ def main():
         rates[i] = {fuel: burn_rate(fuel, p_k) for fuel in FUELS}
 
     # Table 1: burn rates
-    print("$i$, $p_k^i$, " + ", ".join(f"$u$, $u dot rho_t$" for _ in FUELS))
+    print("$i$, $p_k^i$, " + ", ".join("$u$, $u dot rho_t$" for _ in FUELS))
     for i, p_k in enumerate(P_KS, 1):
         row = [f"${i}$", f"${p_k}$"]
         for fuel in FUELS:
@@ -27,7 +27,7 @@ def main():
     print()
 
     # Table 2: l_z and alpha_dv
-    print("$i$, " + ", ".join(f'$l_з^i$, $alpha_"дв"$' for _ in FUELS))
+    print("$i$, " + ", ".join('$l_з^i$, $alpha_"дв"$' for _ in FUELS))
     for i in range(1, len(P_KS) + 1):
         row = [f"${i}$"]
         for fuel in FUELS:

@@ -1,7 +1,9 @@
 import math
+from typing import NamedTuple
 
 import numpy as np
 
+from typst import eq, fmt, param_row, param_table, section
 from utils import (
     G0,
     burn_rate,
@@ -11,6 +13,7 @@ from utils import (
     k0_from_k,
     l_coefficient,
     load_materials,
+    load_trajectory,
     specific_thrust_corrected,
     specific_thrust_design,
     specific_thrust_vacuum,
@@ -19,18 +22,28 @@ from utils import (
 # Primary design requirement: full flight range L (km).
 L_FULL = 12000
 
-# Burnout-trajectory reference (digitized chart): full range L (km) maps to
-# burnout altitude h_к (km), active-segment range l_к (km) and path angle θ_к (deg).
-TRAJ_RANGE = [2000, 4000, 6000, 8000, 10000, 12000, 14000]
-TRAJ_HK = [90, 135, 165, 195, 225, 250, 270]
-TRAJ_LK = [110, 195, 285, 365, 480, 590, 740]
-TRAJ_THETA = [39, 35, 30, 28, 25, 23, 20]
+# Velocity-loss coefficient on the active trajectory segment (k_V): the
+# characteristic (Tsiolkovsky) velocity exceeds the required burnout velocity
+# V_к by this factor to cover gravity/drag/steering losses.
+K_V = 1.165
+
+# Burnout-trajectory reference (table 2.1, assets/table-2.1.csv): full
+# range L (km) maps to burnout altitude h_к (km), active-segment range l_к (km),
+# path angle θ_к (deg), burnout velocity V_к (m/s) and range gradient L'_V.
+_TRAJ = load_trajectory()
+TRAJ_RANGE = _TRAJ["L"].to_numpy()
+TRAJ_HK = _TRAJ["h_k"].to_numpy()
+TRAJ_LK = _TRAJ["l_k"].to_numpy()
+TRAJ_THETA = _TRAJ["theta_k"].to_numpy()
+TRAJ_VK = _TRAJ["V_k"].to_numpy()
+TRAJ_LV = _TRAJ["Lv"].to_numpy()
 
 # Per-stage input data. d_m — motor outer diameter (m), taken from prototype.
+# mu_k — burnout mass fraction μ_к (fuel burned / stage launch mass).
 STAGES = [
-    {"p_k": 50, "p_a": 0.70, "fuel": "polybutadiene", "d_m": 1.7},
-    {"p_k": 35, "p_a": 0.23, "fuel": "polyurethane", "d_m": 1.1},
-    {"p_k": 35, "p_a": 0.14, "fuel": "polyurethane", "d_m": 0.9},
+    {"p_k": 50, "p_a": 0.70, "fuel": "polybutadiene", "d_m": 1.7, "mu_k": 0.66},
+    {"p_k": 35, "p_a": 0.23, "fuel": "polyurethane", "d_m": 1.1, "mu_k": 0.65},
+    {"p_k": 35, "p_a": 0.14, "fuel": "polyurethane", "d_m": 0.9, "mu_k": 0.65},
 ]
 
 # -------------------------------------------------------------------
@@ -60,22 +73,28 @@ CHART_FA = "assets/chart-3-5-fa-fkp-pa-pk.csv"
 CHART_DTZ = "assets/chart-3-6-delta-tz-d-m.csv"
 
 
-def eq(body):
-    return f"#math.equation(numbering: none, block: true, $ {body} $)"
+class Thrust(NamedTuple):
+    """Per-stage specific-thrust results (seconds, except T in kelvin)."""
+
+    P_ud_pr: float  # corrected standard specific thrust
+    P_ud_r: float  # design-condition specific thrust
+    T: float  # combustion temperature, K
+    P_ud_v: float  # vacuum specific thrust
 
 
-def fmt(x):
-    """Format a number: integer if whole, else up to 2 decimal places."""
-    return str(int(x)) if x == int(x) else f"{x:g}"
+class Weight(NamedTuple):
+    """Per-stage weight-coefficient results (kg/m³, except dimensionless a_dv)."""
+
+    a: float  # case and bottoms
+    b: float  # armor coating and adhesive
+    c: float  # nozzle with heat protection
+    q: float  # heat-protection coefficient
+    psi: float  # propellant charge coefficient
+    l_z: float  # charge elongation λ_з
+    a_dv: float  # motor structural coefficient
 
 
-def section(title):
-    """Emit a comment separator marking a high-level output section."""
-    print(f"// ===== {title} =====")
-    print()
-
-
-def calc_thrust(p_k, p_a, fuel, i):
+def calc_thrust(p_k, p_a, fuel, i) -> Thrust:
     props = fuel_props(fuel)
     a = int(props["al_pct"])
     P_ud_st = props["P_ud"]
@@ -122,10 +141,10 @@ def calc_thrust(p_k, p_a, fuel, i):
     print(eq(body))
 
     print()
-    return P_ud_pr, P_ud_r, T, P_ud_v
+    return Thrust(P_ud_pr, P_ud_r, T, P_ud_v)
 
 
-def calc_weights(p_k, p_a, fuel, d_m, i):
+def calc_weights(p_k, p_a, fuel, d_m, i) -> Weight:
     props = fuel_props(fuel)
     rho_t = float(props["rho"])
     R = float(props["R_st"])
@@ -222,88 +241,79 @@ def calc_weights(p_k, p_a, fuel, d_m, i):
     )
 
     print()
-    return a, b, c, q, psi, l_z, a_dv
+    return Weight(a, b, c, q, psi, l_z, a_dv)
 
 
-def main():
-    # --- Specific thrust / impulse ---
+def emit_thrust() -> tuple[list[Thrust], float]:
+    """Specific-thrust section: per-stage equations, summary table, P_уд.ср."""
     section("Удельная тяга")
-    thrust_rows = [
+    thrust = [
         calc_thrust(s["p_k"], s["p_a"], s["fuel"], i) for i, s in enumerate(STAGES, 1)
     ]
 
-    print("  table(")
-    print("    columns: 4,")
-    print("    table.header([Параметр], [I ступень], [II ступень], [III ступень]),")
-
-    labels = [
-        '$P_"уд.ст"^"пр"$, с',
-        '$P_"уд"^"р"$, с',
-        "$T$, К",
-        '$P_"уд.п"$, с',
-    ]
+    labels = ['$P_"уд.ст"^"пр"$, с', '$P_"уд"^"р"$, с', "$T$, К", '$P_"уд.п"$, с']
     fmts = [".2f", ".2f", ".1f", ".2f"]
-
-    for label, fmt_str, col in zip(labels, fmts, range(4)):
-        vals = ", ".join(f"${thrust_rows[i][col]:{fmt_str}}$" for i in range(3))
-        print(f"    [{label}], {vals},")
-
-    print("  ),")
+    attrs = ["P_ud_pr", "P_ud_r", "T", "P_ud_v"]
+    rows = [
+        param_row(label, [getattr(t, attr) for t in thrust], spec)
+        for label, spec, attr in zip(labels, fmts, attrs)
+    ]
+    param_table(rows)
     print()
 
-    P_ud_r1 = thrust_rows[0][1]
-    P_ud_v1, P_ud_v2, P_ud_v3 = thrust_rows[0][3], thrust_rows[1][3], thrust_rows[2][3]
+    P_ud_r1 = thrust[0].P_ud_r
+    P_ud_v1, P_ud_v2, P_ud_v3 = (t.P_ud_v for t in thrust)
     P_ud_avg = (((P_ud_r1 + P_ud_v1) / 2) + P_ud_v2 + P_ud_v3) / 3
-
-    body = (
-        f'P_"уд.ср" = 1/3 (({P_ud_r1:.2f}+{P_ud_v1:.2f})/2'
-        f"+{P_ud_v2:.2f}+{P_ud_v3:.2f})"
-        f' = {P_ud_avg:.2f} "с"'
+    print(
+        eq(
+            f'P_"уд.ср" = 1/3 (({P_ud_r1:.2f}+{P_ud_v1:.2f})/2'
+            f"+{P_ud_v2:.2f}+{P_ud_v3:.2f})"
+            f' = {P_ud_avg:.2f} "с"'
+        )
     )
-    print(eq(body))
     print()
+    return thrust, P_ud_avg
 
-    # --- Weight coefficients ---
+
+def emit_weights() -> None:
+    """Weight-coefficient section: per-stage equations and the K_i table."""
     section("Весовые коэффициенты")
-    weight_rows = [
+    weight = [
         calc_weights(s["p_k"], s["p_a"], s["fuel"], s["d_m"], i)
         for i, s in enumerate(STAGES, 1)
     ]
 
-    print("  table(")
-    print("    columns: 4,")
-    print("    table.header([Параметр], [I ступень], [II ступень], [III ступень]),")
     entries = [
-        ("$a_i$, кг/м³", ".1f", 0),
-        ("$b_i$, кг/м³", ".1f", 1),
-        ("$c_i$, кг/м³", ".1f", 2),
-        ("$q_i$, кг/м³", ".1f", 3),
-        ("$psi_i$, кг/м³", ".1f", 4),
-        ('$a_("дв"i)$', ".4f", 6),
+        ("$a_i$, кг/м³", ".1f", "a"),
+        ("$b_i$, кг/м³", ".1f", "b"),
+        ("$c_i$, кг/м³", ".1f", "c"),
+        ("$q_i$, кг/м³", ".1f", "q"),
+        ("$psi_i$, кг/м³", ".1f", "psi"),
+        ('$a_("дв"i)$', ".4f", "a_dv"),
     ]
-    for label, fmt_str, idx in entries:
-        vals = ", ".join(f"${weight_rows[j][idx]:{fmt_str}}$" for j in range(3))
-        print(f"    [{label}], {vals},")
+    rows = [
+        param_row(label, [getattr(w, attr) for w in weight], spec)
+        for label, spec, attr in entries
+    ]
     # α_ω — only the 3rd stage carries a guarantee fuel reserve
     a_omega_stages = [0.0, 0.0, A_OMEGA_3]
-    a_omega = ", ".join(f"${v:.4f}$" if v else "$-$" for v in a_omega_stages)
-    print(f"    [$a_(omega i)$], {a_omega},")
+    a_omega_cells = [f"${v:.4f}$" if v else "$-$" for v in a_omega_stages]
+    rows.append(param_row("$a_(omega i)$", a_omega_cells))
     # N — same tail-section coefficient for every stage
-    n_tail = ", ".join(f"${N_TAIL:.4f}$" for _ in range(3))
-    print(f"    [$N_i$], {n_tail},")
+    rows.append(param_row("$N_i$", [f"${N_TAIL:.4f}$" for _ in range(3)]))
     # K — engine coefficient: a_дв plus the guarantee fuel reserve
-    k_cells = ", ".join(
-        f"${weight_rows[j][6] + a_omega_stages[j]:.4f}$" for j in range(3)
-    )
-    print(f"    [$K_i$], {k_cells},")
-    print("  ),")
+    k_cells = [f"${weight[j].a_dv + a_omega_stages[j]:.4f}$" for j in range(3)]
+    rows.append(param_row("$K_i$", k_cells))
+    param_table(rows)
     print()
 
     print(eq(f"a_(omega 3) = {A_OMEGA_3}"))
     print(eq(f"N_i = {N_TAIL}"))
     print()
 
-    # --- Burnout-trajectory parameters at the design range ---
+
+def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> None:
+    """Active-segment section: end-of-burn parameters, V_к and relative weights."""
     section("Параметры в конце активного участка")
     h_k = np.interp(L_FULL, TRAJ_RANGE, TRAJ_HK)
     l_k = np.interp(L_FULL, TRAJ_RANGE, TRAJ_LK)
@@ -315,6 +325,45 @@ def main():
             f'theta.alt_"к" approx {fmt(theta_k)} degree'
         )
     )
+    print()
+
+    # Required burnout velocity V_к: the characteristic (Tsiolkovsky) velocity
+    # Σ g₀ P_уд.п ln(1/(1-μ_к)) divided by the loss factor k_V.
+    mu_k = [s["mu_k"] for s in STAGES]
+    p_ud_p = [t.P_ud_v for t in thrust]
+    char_v = sum(G0 * p_ud_p[i] * math.log(1 / (1 - mu_k[i])) for i in range(3))
+    v_k_req = char_v / K_V
+    sum_body = " + ".join(
+        f"{G0} dot {p_ud_p[i]:.2f} dot ln 1/(1-{fmt(mu_k[i])})" for i in range(3)
+    )
+    print(eq(f'V_"к" = 1/{K_V} ({sum_body}) = {v_k_req:.0f} "м/с"'))
+
+    # Velocity demand including losses: V_к + ΔV_к = k_V·V_к.
+    print(
+        eq(
+            f'V_"к" + Delta V_"к" = k_V V_"к"'
+            f' = {K_V} dot {v_k_req:.0f} = {char_v:.0f} "м/с"'
+        )
+    )
+    print()
+
+    # Relative fuel weights of the subrockets (3.18): the characteristic
+    # velocity k_V·V_к is split equally across the n stages.
+    n = len(STAGES)
+    mu_calc = 1 - math.exp(-(K_V * v_k_req) / (n * G0 * P_ud_avg))
+    print(
+        eq(
+            f'mu_("к"i) = 1 - exp(-({K_V} dot {v_k_req:.0f})'
+            f"/({n} dot {G0} dot {P_ud_avg:.2f})) = {mu_calc:.3f}"
+        )
+    )
+    print()
+
+
+def main():
+    thrust, P_ud_avg = emit_thrust()
+    emit_weights()
+    emit_trajectory(thrust, P_ud_avg)
 
 
 if __name__ == "__main__":
