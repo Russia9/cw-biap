@@ -370,16 +370,49 @@ def emit_masses(
     weight: list[Weight], k_values: list[float], mu_k: float, thrust: list[Thrust]
 ) -> None:
     """Subrocket masses (3.19/3.20), motor diameters (3.21), burn times (3.22),
-    thrust-to-weight (3.23) and the launch midsection load (3.24)."""
+    thrust-to-weight (3.23), midsection load (3.24), propellant mass (3.25),
+    thrust (3.26), and stage lengths (3.27)."""
     section("Массы и геометрия субракет")
     n = len(STAGES)
 
-    # Burn rates u_i (mm/s) — same source as the weight section.
     u = [burn_rate(s["fuel"], s["p_k"])[0] for s in STAGES]
 
-    # (3.19)/(3.20) Subrocket launch masses, computed top-down. The top stage
-    # carries the warhead+control unit; each lower stage carries the subrocket
-    # above it as payload (m_пн).
+    # ---- Introductory text with generic formula definitions ----
+    print(
+        "Пользуясь таблицей 3.11 и формулами $(3.19)$, $(3.20)$, рассчитаем массы субракет."
+    )
+    print()
+    print("$ m_(0 i) = (m_(0 i+1))/(1-N_i (1+K_i) mu_(k i)) $")
+    print('$ m_n = (m_"бч" + m_"ау")/(1-N_n-(1+K_n)mu_(k n)) $')
+    print()
+    print("Диаметры ступеней получим по формуле $(3.21)$:")
+    print(
+        '$ d_(м i) = root(3, ((1-N_i)m_(0 i)-m_"пн")/((1+alpha_("дв" i)) psi_i overline(l_(з i)) )) $'
+    )
+    print()
+    print("Время работы двигателя получим по формуле $(3.22)$:")
+    print("$ Delta t_(к i) = d_(м i) (1-overline(d)_к)/(2 u_i) $")
+    print()
+    print("Коэффициенты тяговооруженности субракет получим по формуле $(3.23)$:")
+    print('$ lambda_([0\\/п] i) = (t_(к i))/(mu_(к i) P_("уд." [0\\/п] i)) $')
+    print()
+    print("Найдем начальную поперечную нагрузку на мидель ракеты по формуле $(3.24)$:")
+    print('$ P_(м 1) = 4m_01/pi d_"м1"^2 $')
+    print()
+    print("Найдем массы топливных зарядов ступеней по формуле $(3.25)$.")
+    print("$ omega_(з i) = mu_(к i) m_(0 i) $")
+    print()
+    print("Найдем значения тяги в пустоте и (или) в вакууме по формуле $(3.26)$.")
+    print('$ P = P_"уд" g_0 dot(m) $')
+    print()
+    print("#pagebreak()")
+    print("Найдем длины всех ступеней по формуле $(3.27)$:")
+    print("$ l_(к i) approx 1.15 overline(l_(з i)) d_(м i) $")
+    print()
+    print("Проведем расчеты для всех ступеней по формулам $(3.19) - (3.27)$:")
+    print()
+
+    # ---- (3.19)/(3.20) Subrocket launch masses, computed top-down ----
     m0 = [0.0] * n
     payload = [0.0] * n
     for i in range(n - 1, -1, -1):
@@ -390,8 +423,7 @@ def emit_masses(
         print(eq(f'm_(0 {i + 1}) = {num_src}/({denom_src}) = {m0[i]:.0f} "кг"'))
     print()
 
-    # (3.21) Motor diameters. ψ_i (table 3.11) excludes the relative charge
-    # elongation l̄_з, so l̄_з (chart 4-27, here w.l_z) enters explicitly.
+    # ---- (3.21) Motor diameters ----
     d_m = []
     for i in range(n):
         w = weight[i]
@@ -408,8 +440,7 @@ def emit_masses(
         )
     print()
 
-    # (3.22) Burn times: web thickness d_м(1-d̄_к)/2 over burn rate u_i, with u_i
-    # converted from mm/s to m/s.
+    # ---- (3.22) Burn times ----
     dt = []
     for i in range(n):
         t = d_m[i] * (1 - D_K_BAR) / (2 * u[i] * 1e-3)
@@ -422,8 +453,7 @@ def emit_masses(
         )
     print()
 
-    # (3.23) Thrust-to-weight: stage 1 (atmospheric) uses the design specific
-    # thrust P_уд.р; upper stages use the vacuum value P_уд.п.
+    # ---- (3.23) Thrust-to-weight: stage 1 atmospheric, upper stages vacuum ----
     p_ud = [thrust[0].P_ud_r] + [thrust[i].P_ud_v for i in range(1, n)]
     lam_sub = ["0"] + ['"п"'] * (n - 1)
     lam = []
@@ -438,7 +468,7 @@ def emit_masses(
         )
     print()
 
-    # (3.24) Initial transverse load on the rocket midsection (stage 1 only).
+    # ---- (3.24) Initial transverse load on the rocket midsection ----
     p_m1 = 4 * m0[0] / (math.pi * d_m[0] ** 2)
     print(
         eq(
@@ -448,11 +478,63 @@ def emit_masses(
     )
     print()
 
+    # ---- (3.25) Propellant charge masses ----
+    omega_z = []
+    for i in range(n):
+        w_z = mu_k * m0[i]
+        omega_z.append(w_z)
+        print(eq(f'omega_(з {i + 1}) = {mu_k:.3f} dot {m0[i]:.0f} = {w_z:.0f} "кг"'))
+    print()
+
+    # ---- (3.26) Thrust: stage 1 gets both atmospheric and vacuum; upper stages vacuum only ----
+    m_dot = [omega_z[i] / dt[i] for i in range(n)]
+    P_r1 = thrust[0].P_ud_r * G0 * m_dot[0]
+    P_v = [thrust[i].P_ud_v * G0 * m_dot[i] for i in range(n)]
+
+    print(
+        eq(
+            f"P_(0 1) = {thrust[0].P_ud_r:.2f} dot {G0} dot {omega_z[0]:.0f} / {dt[0]:.1f}"
+            f' = {P_r1 / 1000:.1f} "кН"'
+        )
+    )
+    print(
+        eq(
+            f'P_("п"1) = {thrust[0].P_ud_v:.2f} dot {G0} dot {omega_z[0]:.0f} / {dt[0]:.1f}'
+            f' = {P_v[0] / 1000:.1f} "кН"'
+        )
+    )
+    for i in range(1, n):
+        print(
+            eq(
+                f'P_("п"{i + 1}) = {thrust[i].P_ud_v:.2f} dot {G0} dot {omega_z[i]:.0f} / {dt[i]:.1f}'
+                f' = {P_v[i] / 1000:.1f} "кН"'
+            )
+        )
+    print()
+
+    # ---- (3.27) Stage lengths ----
+    l_k = []
+    for i in range(n):
+        l = 1.15 * weight[i].l_z * d_m[i]
+        l_k.append(l)
+        print(
+            eq(
+                f"l_(к {i + 1}) approx 1.15 dot {weight[i].l_z:.1f} dot {d_m[i]:.2f}"
+                f' = {l:.2f} "м"'
+            )
+        )
+    print()
+
+    p_r1_cells = [f"${P_r1 / 1000:.1f}$", "$-$", "$-$"]
     rows = [
         param_row("$m_(0 i)$, кг", m0, ".0f"),
         param_row("$d_(м i)$, м", d_m, ".2f"),
         param_row("$Delta t_(к i)$, с", dt, ".1f"),
         param_row("$lambda_([0\\/п] i)$", lam, ".3f"),
+        param_row("$omega_(з i)$, кг", omega_z, ".0f"),
+        param_row("$P_(0 1)$, кН", p_r1_cells),
+        param_row('$P_("п" i)$, кН', [v / 1000 for v in P_v], ".1f"),
+        param_row("$l_(к i)$, м", l_k, ".2f"),
     ]
     param_table(rows)
     print()
