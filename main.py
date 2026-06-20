@@ -73,6 +73,11 @@ BETA_C = math.radians(20)  # nozzle half-angle β_c
 A_OMEGA_3 = 0.025  # guarantee fuel reserve coefficient α_ω (3rd stage only)
 N_TAIL = 0.012  # tail-section mass coefficient N
 
+# Charge/nozzle geometry factors (section 3.28–3.42)
+K_S = 2.03  # burning-surface shape coefficient k_s (2.03–3.4)
+N_NOZZLES = 4  # number of nozzles per stage n_с (prototype: 4 gimbaled nozzles)
+H_RUDDER = 0.2  # end-rudder protrusion h, m
+
 CHART_FA = "assets/chart-3-5-fa-fkp-pa-pk.csv"
 CHART_DTZ = "assets/chart-3-6-delta-tz-d-m.csv"
 
@@ -515,12 +520,12 @@ def emit_masses(
     # ---- (3.27) Stage lengths ----
     l_k = []
     for i in range(n):
-        l = 1.15 * weight[i].l_z * d_m[i]
-        l_k.append(l)
+        length = 1.15 * weight[i].l_z * d_m[i]
+        l_k.append(length)
         print(
             eq(
                 f"l_(к {i + 1}) approx 1.15 dot {weight[i].l_z:.1f} dot {d_m[i]:.2f}"
-                f' = {l:.2f} "м"'
+                f' = {length:.2f} "м"'
             )
         )
     print()
@@ -538,13 +543,271 @@ def emit_masses(
     ]
     param_table(rows)
     print()
+    return d_m
+
+
+def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
+    """Charge and nozzle geometry (3.28–3.42): charge length, slot height and
+    burning surface (3.28–3.30); throat/exit areas and diameters (3.31–3.34);
+    igniter, charge and channel diameters (3.35–3.37); nozzle convergent and
+    divergent lengths, igniter/bottoms sizes and overall stage lengths
+    (3.38–3.42)."""
+    section("Геометрия зарядов и сопел")
+    beta_deg = int(round(math.degrees(BETA_C)))
+    cot_beta = 1 / math.tan(BETA_C)
+
+    # ---- Per-stage geometry, each stage independent ----
+    geo = []
+    for i, s in enumerate(STAGES):
+        props = fuel_props(s["fuel"])
+        R = float(props["R_st"])
+        k = float(props["k_st"])
+        T_st = float(props["T"])
+        p_k = s["p_k"]
+        p_a = s["p_a"]
+        l_z = weight[i].l_z
+        d = d_m[i]
+
+        _, rho_u = burn_rate(s["fuel"], p_k)  # u·ρ_т, kg/(m²·s)
+        T = combustion_temp(T_st, p_k)
+        K0 = k0_from_k(k)
+        fa_fkp = interp_chart(CHART_FA, f"k{k:.2f}", p_k / p_a)
+        # δ_тз read at the prototype d_м, matching the weight section (3.10),
+        # so the heat-protection thickness is consistent across the report.
+        delta_tz_mm = interp_chart(CHART_DTZ, A_TZ, s["d_m"])
+
+        l_zi = l_z * d  # (3.28) charge length
+        h_slot = (0.37 * l_z - 0.30) * d  # (3.29) slot height
+        S = K_S * l_z * d**2  # (3.30) burning surface
+        d_kr2 = (4 * S * rho_u * math.sqrt(R * T)) / (
+            math.pi * K0 * p_k * 1e5 * N_NOZZLES
+        )  # (3.31) throat diameter squared
+        d_kr = math.sqrt(d_kr2)
+        F_kr = math.pi * d_kr2 / 4  # (3.32) throat area
+        F_a = fa_fkp * F_kr  # (3.33) exit area
+        d_a = math.sqrt(4 * F_a / math.pi)  # (3.34) exit diameter
+        l_v = 0.1 * d  # (3.35) igniter length
+        # Case thickness from thin-walled hoop-stress condition (matches a, 3.7)
+        delta_k = ETA * p_k * 1e5 * d / (2 * SIGMA_V)
+        delta_tz = delta_tz_mm * 1e-3  # heat-protection thickness, m
+        d_z = d - 2 * delta_k - 2 * delta_tz  # (3.37) charge diameter
+        d_k = D_K_BAR * d_z  # (3.36) channel diameter
+        l_dk = (d_k - d_kr) / 2 * cot_beta  # (3.38) convergent length
+        l_a = (d_a - d_kr) / 2 * cot_beta  # (3.39) divergent length
+        d_v = 0.2 * d  # (3.40) igniter diameter
+        l_dn = 0.3 * d  # (3.41) bottoms length
+        L = l_zi + l_a + l_dk + H_RUDDER + l_v  # (3.42) stage length
+
+        geo.append(
+            {
+                "R": R, "T": T, "K0": K0, "rho_u": rho_u, "fa_fkp": fa_fkp,
+                "p_k": p_k, "l_z": l_z, "d": d, "l_zi": l_zi, "h_slot": h_slot,
+                "S": S, "d_kr2": d_kr2, "d_kr": d_kr, "F_kr": F_kr, "F_a": F_a,
+                "d_a": d_a, "l_v": l_v, "delta_k": delta_k,
+                "delta_tz_mm": delta_tz_mm, "d_z": d_z, "d_k": d_k,
+                "l_dk": l_dk, "l_a": l_a, "d_v": d_v, "l_dn": l_dn, "L": L,
+            }
+        )  # fmt: skip
+
+    # ---- Formula exposition (section text) ----
+    print("Найдем длины зарядов по формуле $(3.28)$:")
+    print("$ l_(з i) = overline(l_з i) d_(м i) $")
+    print()
+    print("Найдем длины щелей по формуле $(3.29)$:")
+    print("$ h_i = (0.37 overline(l_з i) - 0.30) d_(м i) $")
+    print()
+    print("Найдем площадь поверхности горения по формуле $(3.30)$:")
+    print("$ S_i = k_s overline(l_(з i)) d_(м i)^2 $")
+    print(f"где $k_s = 2.03 .. 3.4$. Возьмем $k_s = {K_S}$.")
+    print()
+    print("Найдем диаметр критического сечения по формуле $(3.31)$:")
+    print('$ d_("кр" i)^2 = (4 S (u rho_т) sqrt(R T))/(pi K_0 p_к n_с) $')
+    print(f"где $n_с = {N_NOZZLES}$ --- число сопел.")
+    print()
+    print("Найдем площадь критического сечения по формуле $(3.32)$:")
+    print('$ F_("кр" i) = (pi d_("кр" i)^2)/4 $')
+    print()
+    print("Найдем площадь среза сопла по формуле $(3.33)$:")
+    print('$ F_a = (F_(a)/F_("кр"))_i F_("кр" i) $')
+    print()
+    print("Найдем диаметр среза сопла по формуле $(3.34)$")
+    print("$ d_(a i) = sqrt((4 F_(a i))/pi) $")
+    print()
+    print("Найдем длину воспламенительного устройства по формуле $(3.35)$:")
+    print("$ l_(в i) = (0.1 .. 0.15) d_(м i) $")
+    print("Возьмем в качестве множителя $0.1$.")
+    print()
+    print("Найдем диаметр внутреннего канала по формуле $(3.36)$:")
+    print("$ d_(к i) = overline(d_(к i)) d_(з i) $")
+    print()
+    print("#pagebreak()")
+    print("Найдем диаметр заряда по формуле $(3.37)$:")
+    print('$ d_(з i) = d_(м i) - 2 delta_(к i) - 2 delta_("тз" i) $')
+    print(
+        "где $delta_(к i)$ --- толщина корпуса, а $delta_(\"тз\" i)$ --- "
+        "толщина теплозащиты."
+    )
+    print(
+        "Толщину корпуса определим из условия прочности тонкостенной оболочки, "
+        "а толщину теплозащиты --- по графику $3.6$:"
+    )
+    print("$ delta_(к i) = (eta p_к d_(м i))/(2 sigma_в) $")
+    print()
+    print("Определим длину докритической части сопла по формуле $(3.38)$:")
+    print('$ l_("дк" i) = ((d_(к i) - d_("кр" i))/2) ctg(beta_(c i)) $')
+    print()
+    print("Определим длину закритической части сопла по формуле $(3.39)$:")
+    print('$ l_(a i) = ((d_(a i) - d_("кр" i))/2) ctg(beta_(c i)) $')
+    print()
+    print("Найдем диаметр воспламенительного устройства по формуле $(3.40)$:")
+    print("$ d_(в i) = (0.2..0.3) d_(м i) $")
+    print("Выберем значение $0.2$ в качестве коэффициента.")
+    print()
+    print("Найдем длину днищ по формуле $(3.41)$:")
+    print("$ l_(\"дн\" i) approx 0.3 d_(м i) $")
+    print()
+    print('Примем выступы концевых рулей $h=0.2 "м"$.')
+    print()
+    print("Найдем длины ступеней по формуле $(3.42)$:")
+    print("$ L_i = l_(з i) + l_(а i) + l_(\"дк\" i) + h + l_(в i) $")
+    print()
+    print("Проведем расчеты для всех ступеней по формулам $(3.28) - (3.42)$:")
+    print()
+
+    # ---- Per-formula numeric results ----
+    for i, g in enumerate(geo, 1):
+        print(eq(f'l_(з {i}) = {g["l_z"]:.1f} dot {g["d"]:.2f} = {g["l_zi"]:.2f} "м"'))
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(
+                f"h_{i} = (0.37 dot {g['l_z']:.1f} - 0.30) dot {g['d']:.2f}"
+                f' = {g["h_slot"]:.3f} "м"'
+            )
+        )
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(f'S_{i} = {K_S} dot {g["l_z"]:.1f} dot {g["d"]:.2f}^2 = {g["S"]:.2f} "м²"')
+        )
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(
+                f'd_("кр" {i})^2 = (4 dot {g["S"]:.2f} dot {g["rho_u"]:.2f} dot '
+                f'sqrt({fmt(g["R"])} dot {g["T"]:.1f}))'
+                f"/(pi dot {g['K0']:.3f} dot {g['p_k']} dot 10^5 dot {N_NOZZLES})"
+                f' = {g["d_kr2"]:.4f} "м²"'
+            )
+        )
+        print(eq(f'd_("кр" {i}) = sqrt({g["d_kr2"]:.4f}) = {g["d_kr"]:.3f} "м"'))
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(
+                f'F_("кр" {i}) = (pi dot {g["d_kr2"]:.4f})/4 = {g["F_kr"]:.4f} "м²"'
+            )
+        )
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(
+                f"F_(a {i}) = {g['fa_fkp']:.2f} dot {g['F_kr']:.4f}"
+                f' = {g["F_a"]:.4f} "м²"'
+            )
+        )
+    print()
+    for i, g in enumerate(geo, 1):
+        print(eq(f'd_(a {i}) = sqrt((4 dot {g["F_a"]:.4f})/pi) = {g["d_a"]:.3f} "м"'))
+    print()
+    for i, g in enumerate(geo, 1):
+        print(eq(f'l_(в {i}) = 0.1 dot {g["d"]:.2f} = {g["l_v"]:.3f} "м"'))
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(
+                f"delta_(к {i}) = ({ETA} dot {g['p_k']} dot 10^5 dot {g['d']:.2f})"
+                f"/(2 dot {SIGMA_V / 1e6:.0f} dot 10^6)"
+                f' = {g["delta_k"] * 1e3:.2f} dot 10^(-3) "м"'
+            )
+        )
+        print(eq(f'delta_("тз" {i}) = {g["delta_tz_mm"]:.2f} dot 10^(-3) "м"'))
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(
+                f"d_(з {i}) = {g['d']:.2f} - 2 dot {g['delta_k'] * 1e3:.2f} dot 10^(-3)"
+                f" - 2 dot {g['delta_tz_mm']:.2f} dot 10^(-3)"
+                f' = {g["d_z"]:.3f} "м"'
+            )
+        )
+    print()
+    for i, g in enumerate(geo, 1):
+        print(eq(f'd_(к {i}) = {D_K_BAR} dot {g["d_z"]:.3f} = {g["d_k"]:.3f} "м"'))
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(
+                f'l_("дк" {i}) = (({g["d_k"]:.3f} - {g["d_kr"]:.3f})/2)'
+                f' dot ctg({beta_deg}°) = {g["l_dk"]:.3f} "м"'
+            )
+        )
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(
+                f'l_(a {i}) = (({g["d_a"]:.3f} - {g["d_kr"]:.3f})/2)'
+                f' dot ctg({beta_deg}°) = {g["l_a"]:.3f} "м"'
+            )
+        )
+    print()
+    for i, g in enumerate(geo, 1):
+        print(eq(f'd_(в {i}) = 0.2 dot {g["d"]:.2f} = {g["d_v"]:.3f} "м"'))
+    print()
+    for i, g in enumerate(geo, 1):
+        print(eq(f'l_("дн" {i}) approx 0.3 dot {g["d"]:.2f} = {g["l_dn"]:.3f} "м"'))
+    print()
+    for i, g in enumerate(geo, 1):
+        print(
+            eq(
+                f"L_{i} = {g['l_zi']:.2f} + {g['l_a']:.3f} + {g['l_dk']:.3f}"
+                f" + {H_RUDDER} + {g['l_v']:.3f}"
+                f' = {g["L"]:.2f} "м"'
+            )
+        )
+    print()
+
+    # ---- Summary table ----
+    entries = [
+        ("$l_(з i)$, м", ".2f", "l_zi"),
+        ("$h_i$, м", ".3f", "h_slot"),
+        ("$S_i$, м²", ".2f", "S"),
+        ('$d_("кр" i)$, м', ".3f", "d_kr"),
+        ('$F_("кр" i)$, м²', ".4f", "F_kr"),
+        ("$F_(a i)$, м²", ".4f", "F_a"),
+        ("$d_(a i)$, м", ".3f", "d_a"),
+        ("$l_(в i)$, м", ".3f", "l_v"),
+        ("$d_(з i)$, м", ".3f", "d_z"),
+        ("$d_(к i)$, м", ".3f", "d_k"),
+        ('$l_("дк" i)$, м', ".3f", "l_dk"),
+        ("$l_(a i)$, м", ".3f", "l_a"),
+        ("$d_(в i)$, м", ".3f", "d_v"),
+        ('$l_("дн" i)$, м', ".3f", "l_dn"),
+        ("$L_i$, м", ".2f", "L"),
+    ]
+    rows = [
+        param_row(label, [g[key] for g in geo], spec) for label, spec, key in entries
+    ]
+    param_table(rows)
+    print()
 
 
 def main():
     thrust, P_ud_avg = emit_thrust()
     weight, k_values = emit_weights()
     mu_k = emit_trajectory(thrust, P_ud_avg)
-    emit_masses(weight, k_values, mu_k, thrust)
+    d_m = emit_masses(weight, k_values, mu_k, thrust)
+    emit_geometry(weight, d_m)
 
 
 if __name__ == "__main__":
