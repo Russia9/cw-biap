@@ -15,20 +15,23 @@ uv run python preliminary.py # burn-rate and l_z/alpha_dv preliminary tables
 
 ## Architecture
 
-Three layers:
+Four layers:
 
 1. **`assets/*.csv`** — raw data tables digitized from textbook charts:
    - `fuels.csv` — fuel properties (ρ, R, k, T, P_ud, burn-rate law, Al%)
+   - `materials.csv` (`load_materials`), `table-2.1.csv` (`load_trajectory`, burnout-trajectory reference)
    - `chart-4-26-alpha.csv`, `chart-4-27-l.csv` — digitized nomogram curves for bilinear interpolation
    - `chart-3-5-*.csv`, `chart-3-6-*.csv`, `table-k-k0.csv` — additional reference tables
 
 2. **`utils.py`** — pure physics functions + CSV-backed interpolation. All functions are stateless; they accept SI/practical units and return floats. Chart lookups use `np.interp` with bilinear interpolation across curves.
 
-3. **`main.py` / `preliminary.py`** — calculation scripts. Each defines a `STAGES` list / constants at the top and a `main()` that prints Typst snippets (`#math.equation(...)` blocks or CSV-like table rows).
+3. **`typst.py`** — pure presentation/rendering layer, kept separate from physics: `eq()` (wrap a math body), `fmt()`, `section()`, `param_row()`/`param_table()` (emit Typst `table(...)` rows with a `[Параметр]` column plus per-stage columns).
+
+4. **`main.py` / `preliminary.py`** — calculation scripts. Each defines a `STAGES` list / constants at the top and a `main()` that prints Typst snippets. In `main.py`, keep the split: `calc_*` functions are pure (return `Thrust`/`Weight` NamedTuples), and `emit_*` functions do the printing — don't mix computation into the emit functions.
 
 ## Output format
 
-Scripts emit Typst source, not plain text. Inline strings use Typst math syntax with Cyrillic labels (e.g. `"уд"`, `"ст"`). The `eq()` helper in `main.py` wraps a body in a `#math.equation(numbering: none, block: true, $ … $)` call.
+Scripts emit Typst source, not plain text. Inline strings use Typst math syntax with Cyrillic labels (e.g. `"уд"`, `"ст"`). The `eq()` helper (in `typst.py`) wraps a body in a `#math.equation(numbering: none, block: true, $ … $)` call.
 
 ## CSV chart format
 
