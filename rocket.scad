@@ -8,9 +8,9 @@
 // upper stage's nozzles; it drops together with that lower stage, exposing the
 // next stage's nozzles. The first stage has no skirt (its nozzles are bare).
 //
-// Stage 3 shares the same motor-case diameter as stage 2 (d_м3 = d_м2 = 1.16 m),
-// so its nozzle exit circle fits within the case and an ordinary interstage skirt
-// (belonging to stage 2) can enclose stage 3's nozzles — no separate tail section.
+// Stage 3 has the same motor-case diameter as stage 2 (d_м3 = d_м2 = 1.16 m),
+// so the stages mate flush with no interstage skirt; stage 3's nozzles hang bare
+// below its body (same as stage 1).
 //
 // Unit = METERS. OpenSCAD is unitless; set SCALE=1000 for a millimetre STL.
 //
@@ -32,11 +32,11 @@ eps = 0.003;     // small overlap so stacked sections fuse into one manifold sol
 //  These mirror the report tables; verify against the script output, do not
 //  tune them here.
 // ============================================================================
-d_m  = [1.57,  1.16,  1.16 ];  // motor-case diameter  d_(м i)    (table 3.13)
-L    = [7.67,  4.30,  2.83 ];  // overall stage length L_i        (table 3.14)
-d_kr = [0.166, 0.134, 0.086];  // nozzle throat dia    d_("кр" i)  (table 3.14)
-d_a  = [0.448, 0.462, 0.444];  // nozzle exit dia      d_(a i)     (table 3.14)
-l_a  = [0.387, 0.450, 0.492];  // nozzle bell length   l_(a i)     (divergent cone)
+d_m  = [1.58,  1.17,  1.17 ];  // motor-case diameter  d_(м i)    (table 3.13); d_m[2]=d_m[1] by design
+L    = [7.72,  4.33,  2.85 ];  // overall stage length L_i        (table 3.14)
+d_kr = [0.168, 0.135, 0.086];  // nozzle throat dia    d_("кр" i)  (table 3.14)
+d_a  = [0.452, 0.466, 0.447];  // nozzle exit dia      d_(a i)     (table 3.14)
+l_a  = [0.390, 0.454, 0.495];  // nozzle bell length   l_(a i)     (divergent cone)
 
 n_noz   = 4;                   // nozzles per stage
 noz_gap = [1.3, 1.06, 1.06];     // per stage; >1 spreads the 4 bells apart (genus-0 mesh)
@@ -49,16 +49,12 @@ noz_gap = [1.3, 1.06, 1.06];     // per stage; >1 spreads the 4 bells apart (gen
 // stage 2's nozzles, drops with stage 1.
 H_sk12 = 0.40; H_cone21 = 0.40;   // stage 1/2 interstage (d_m[0] -> d_m[1])
 
-// Interstage 2-3 skirt; belongs to stage 2, encloses stage 3's nozzles, drops
-// with stage 2. No cone needed — d_м3 = d_м2 so diameters are equal.
-H_sk23 = 0.40;                     // stage 2/3 interstage skirt height
-
 // Navigation + head (read from the CAD drawing; edit freely).
-d_ns = 0.70; L_ns = 0.75;   // navigation module
-d_pl = 0.54; L_pl = 0.50;   // head / warhead body
+d_ns = 0.70; L_ns = 0.18;   // navigation module
+d_pl = 0.54; L_pl = 0.65;   // head / warhead body
 h_nose = 0.51;              // warhead nose cone
-H_s3nav   = 0.18;           // adapter stage 3 -> nav  (1.16 -> 0.70)
-H_navhead = 0.18;           // adapter nav -> head     (0.70 -> 0.54)
+H_s3nav   = 0.75;           // adapter stage 3 -> nav  (1.16 -> 0.70)
+H_navhead = 0.5;           // adapter nav -> head     (0.70 -> 0.54)
 
 // Colours (preview only; STL has no colour). C_S indexed by stage.
 C_S  = [[0.70, 0.70, 0.72],   // stage 1
@@ -92,8 +88,7 @@ z_body1  = 0;
 z_sk12   = z_body1 + L[0];     // interstage skirt 1-2 (d_m[0], encloses stage-2 nozzles)
 z_cone21 = z_sk12 + H_sk12;    // cone d_m[0] -> d_m[1]
 z_body2  = z_cone21 + H_cone21;
-z_sk23   = z_body2 + L[1];     // interstage skirt 2-3 (d_m[1], encloses stage-3 nozzles)
-z_body3  = z_sk23 + H_sk23;
+z_body3  = z_body2 + L[1];     // stages 2/3 mate flush (equal diameters, no skirt)
 z_s3nav  = z_body3 + L[2];
 z_nav    = z_s3nav + H_s3nav;
 z_navhead = z_nav + L_ns;
@@ -118,7 +113,6 @@ module stage1_group() {
 module stage2_group() {
     color(C_STR) nozzles(z_body2, 1);              // exposed once stage 1 drops
     color(C_S[1]) seg_tube(z_body2, L[1], d_m[1]);
-    color(C_STR) seg_tube(z_sk23, H_sk23, d_m[1]); // skirt enclosing stage-3 nozzles
 }
 
 module stage3_group() {
@@ -160,7 +154,7 @@ scale(SCALE) rotate([0, -90, 0]) translate([0, 0, -z_top]) assembly(PART);
 echo(str("PART=", PART, "  SCALE=", SCALE));
 echo(str("Stage diameters d_m = ", d_m, " m"));
 echo(str("Stage lengths   L   = ", L, " m"));
-echo(str("Interstage 2-3 skirt  H_sk23 = ", H_sk23, " m"));
+
 echo(str("Nav: d=", d_ns, " L=", L_ns, "   Head: d=", d_pl, " L=", L_pl, " + nose ", h_nose));
 echo(str("Nozzles/stage=", n_noz, "  throat d_kr=", d_kr, " exit d_a=", d_a, " bell l_a=", l_a, " gap=", noz_gap));
 echo(str("Full height (excl. nozzles) = ", z_top, " m"));
