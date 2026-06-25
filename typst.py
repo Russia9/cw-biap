@@ -20,6 +20,14 @@ def section(title):
     print()
 
 
+_STAGE_NAMES = ["Первая", "Вторая", "Третья"]
+
+
+def stage_header(i):
+    """Emit a bold stage heading (1-indexed)."""
+    print(f"*{_STAGE_NAMES[i - 1]} ступень:*")
+
+
 def param_row(label, values, spec=""):
     """Build one Typst parameter-table row: a label cell plus value cells.
 

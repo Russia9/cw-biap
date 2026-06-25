@@ -3,7 +3,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from typst import eq, fmt, param_row, param_table, section
+from typst import eq, fmt, param_row, param_table, section, stage_header
 from utils import (
     G0,
     burn_rate,
@@ -42,7 +42,7 @@ TRAJ_LV = _TRAJ["Lv"].to_numpy()
 # mu_k — burnout mass fraction μ_к (fuel burned / stage launch mass).
 STAGES = [
     {"p_k": 50, "p_a": 0.70, "fuel": "polybutadiene", "d_m": 1.7, "mu_k": 0.66},
-    {"p_k": 35, "p_a": 0.23, "fuel": "polyurethane", "d_m": 1.1, "mu_k": 0.65},
+    {"p_k": 35, "p_a": 0.37, "fuel": "polyurethane", "d_m": 1.1, "mu_k": 0.65},
     {"p_k": 35, "p_a": 0.14, "fuel": "polyurethane", "d_m": 0.9, "mu_k": 0.65},
 ]
 
@@ -172,12 +172,13 @@ def calc_weights(p_k, p_a, fuel, d_m, i) -> Weight:
     K_tz = (delta_tz_mm * 1e-3) / d_m
 
     # (3.7) case and bottoms; η (safety factor) multiplies the mass
-    a = (math.pi / 2 * l_z + 1) * (p_k * 1e5 * RHO_M) / SIGMA_V * ETA
+    eta_37 = 1.6 if i == 3 else ETA
+    a = (math.pi / 2 * l_z + 1) * (p_k * 1e5 * RHO_M) / SIGMA_V * eta_37
     print(
         eq(
             f"a_{i} = (pi/2 dot {l_z:.1f} + 1)"
             f" dot ({fmt(p_k)} dot 10^5 dot {fmt(RHO_M)})"
-            f" / ({SIGMA_V / 1e6:.0f} dot 10^6) dot {ETA}"
+            f" / ({SIGMA_V / 1e6:.0f} dot 10^6) dot {eta_37}"
             f' = {a:.1f} "кг/м³"'
         )
     )
@@ -256,9 +257,12 @@ def calc_weights(p_k, p_a, fuel, d_m, i) -> Weight:
 def emit_thrust() -> tuple[list[Thrust], float]:
     """Specific-thrust section: per-stage equations, summary table, P_уд.ср."""
     section("Удельная тяга")
-    thrust = [
-        calc_thrust(s["p_k"], s["p_a"], s["fuel"], i) for i, s in enumerate(STAGES, 1)
-    ]
+    thrust = []
+    for i, s in enumerate(STAGES, 1):
+        if i == 3:
+            print("#pagebreak()")
+        stage_header(i)
+        thrust.append(calc_thrust(s["p_k"], s["p_a"], s["fuel"], i))
 
     labels = ['$P_"уд.ст"^"пр"$, с', '$P_"уд"^"р"$, с', "$T$, К", '$P_"уд.п"$, с']
     fmts = [".2f", ".2f", ".1f", ".2f"]
@@ -287,10 +291,12 @@ def emit_thrust() -> tuple[list[Thrust], float]:
 def emit_weights() -> tuple[list[Weight], list[float]]:
     """Weight-coefficient section: per-stage equations and the K_i table."""
     section("Весовые коэффициенты")
-    weight = [
-        calc_weights(s["p_k"], s["p_a"], s["fuel"], s["d_m"], i)
-        for i, s in enumerate(STAGES, 1)
-    ]
+    print("Проведем расчеты для всех ступеней по формулам $(3.7) - (3.14)$:")
+    print()
+    weight = []
+    for i, s in enumerate(STAGES, 1):
+        stage_header(i)
+        weight.append(calc_weights(s["p_k"], s["p_a"], s["fuel"], s["d_m"], i))
 
     entries = [
         ("$a_i$, кг/м³", ".1f", "a"),
@@ -417,18 +423,13 @@ def emit_masses(
     print("Проведем расчеты для всех ступеней по формулам $(3.19) - (3.27)$:")
     print()
 
-    # ---- (3.19)/(3.20) Subrocket launch masses, computed top-down ----
+    # ---- Compute all values (m0 top-down, rest in stage order) ----
     m0 = [0.0] * n
     payload = [0.0] * n
     for i in range(n - 1, -1, -1):
         payload[i] = (M_BCH + M_AU) if i == n - 1 else m0[i + 1]
         m0[i] = payload[i] / (1 - N_TAIL - (1 + k_values[i]) * mu_k)
-        denom_src = f"1 - {N_TAIL} - (1 + {k_values[i]:.4f}) dot {mu_k:.3f}"
-        num_src = f"({M_BCH} + {M_AU})" if i == n - 1 else f"{m0[i + 1]:.0f}"
-        print(eq(f'm_(0 {i + 1}) = {num_src}/({denom_src}) = {m0[i]:.0f} "кг"'))
-    print()
 
-    # ---- (3.21) Motor diameters ----
     d_m = []
     for i in range(n):
         w = weight[i]
@@ -436,99 +437,83 @@ def emit_masses(
             1 / 3
         )
         d_m.append(d)
+
+    dt = [d_m[i] * (1 - D_K_BAR) / (2 * u[i] * 1e-3) for i in range(n)]
+    p_ud = [thrust[0].P_ud_r] + [thrust[i].P_ud_v for i in range(1, n)]
+    lam_sub = ["0"] + ['"п"'] * (n - 1)
+    lam = [dt[i] / (mu_k * p_ud[i]) for i in range(n)]
+    p_m1 = 4 * m0[0] / (math.pi * d_m[0] ** 2)
+    omega_z = [mu_k * m0[i] for i in range(n)]
+    m_dot = [omega_z[i] / dt[i] for i in range(n)]
+    P_r1 = thrust[0].P_ud_r * G0 * m_dot[0]
+    P_v = [thrust[i].P_ud_v * G0 * m_dot[i] for i in range(n)]
+    l_k = [1.15 * weight[i].l_z * d_m[i] for i in range(n)]
+
+    # ---- Print per stage ----
+    for i in range(n):
+        stage_header(i + 1)
+        denom_src = f"1 - {N_TAIL} - (1 + {k_values[i]:.4f}) dot {mu_k:.3f}"
+        num_src = f"({M_BCH} + {M_AU})" if i == n - 1 else f"{m0[i + 1]:.0f}"
+        print(eq(f'm_(0 {i + 1}) = {num_src}/({denom_src}) = {m0[i]:.0f} "кг"'))
+        w = weight[i]
         print(
             eq(
                 f"d_(м {i + 1}) = root(3, ((1 - {N_TAIL}) dot {m0[i]:.0f} - {payload[i]:.0f})"
                 f"/((1 + {w.a_dv:.4f}) dot {w.psi:.1f} dot {w.l_z:.1f}))"
-                f' = {d:.2f} "м"'
+                f' = {d_m[i]:.2f} "м"'
             )
         )
-    print()
-
-    # ---- (3.22) Burn times ----
-    dt = []
-    for i in range(n):
-        t = d_m[i] * (1 - D_K_BAR) / (2 * u[i] * 1e-3)
-        dt.append(t)
         print(
             eq(
                 f"Delta t_(к {i + 1}) = ({d_m[i]:.2f} dot (1 - {D_K_BAR}))"
-                f'/(2 dot {u[i]:.2f} dot 10^(-3)) = {t:.1f} "с"'
+                f'/(2 dot {u[i]:.2f} dot 10^(-3)) = {dt[i]:.1f} "с"'
             )
         )
-    print()
-
-    # ---- (3.23) Thrust-to-weight: stage 1 atmospheric, upper stages vacuum ----
-    p_ud = [thrust[0].P_ud_r] + [thrust[i].P_ud_v for i in range(1, n)]
-    lam_sub = ["0"] + ['"п"'] * (n - 1)
-    lam = []
-    for i in range(n):
-        v = dt[i] / (mu_k * p_ud[i])
-        lam.append(v)
         print(
             eq(
                 f"lambda_({lam_sub[i]}{i + 1}) = {dt[i]:.1f}"
-                f"/({mu_k:.3f} dot {p_ud[i]:.2f}) = {v:.3f}"
+                f"/({mu_k:.3f} dot {p_ud[i]:.2f}) = {lam[i]:.3f}"
             )
         )
-    print()
-
-    # ---- (3.24) Initial transverse load on the rocket midsection ----
-    p_m1 = 4 * m0[0] / (math.pi * d_m[0] ** 2)
-    print(
-        eq(
-            f'P_("м"1) = (4 dot {m0[0]:.0f})/(pi dot {d_m[0]:.2f}^2)'
-            f' = {p_m1:.0f} "кг/м²"'
-        )
-    )
-    print()
-
-    # ---- (3.25) Propellant charge masses ----
-    omega_z = []
-    for i in range(n):
-        w_z = mu_k * m0[i]
-        omega_z.append(w_z)
-        print(eq(f'omega_(з {i + 1}) = {mu_k:.3f} dot {m0[i]:.0f} = {w_z:.0f} "кг"'))
-    print()
-
-    # ---- (3.26) Thrust: stage 1 gets both atmospheric and vacuum; upper stages vacuum only ----
-    m_dot = [omega_z[i] / dt[i] for i in range(n)]
-    P_r1 = thrust[0].P_ud_r * G0 * m_dot[0]
-    P_v = [thrust[i].P_ud_v * G0 * m_dot[i] for i in range(n)]
-
-    print(
-        eq(
-            f"P_(0 1) = {thrust[0].P_ud_r:.2f} dot {G0} dot {omega_z[0]:.0f} / {dt[0]:.1f}"
-            f' = {P_r1 / 1000:.1f} "кН"'
-        )
-    )
-    print(
-        eq(
-            f'P_("п"1) = {thrust[0].P_ud_v:.2f} dot {G0} dot {omega_z[0]:.0f} / {dt[0]:.1f}'
-            f' = {P_v[0] / 1000:.1f} "кН"'
-        )
-    )
-    for i in range(1, n):
+        if i == 0:
+            print(
+                eq(
+                    f'P_("м"1) = (4 dot {m0[0]:.0f})/(pi dot {d_m[0]:.2f}^2)'
+                    f' = {p_m1:.0f} "кг/м²"'
+                )
+            )
         print(
             eq(
-                f'P_("п"{i + 1}) = {thrust[i].P_ud_v:.2f} dot {G0} dot {omega_z[i]:.0f} / {dt[i]:.1f}'
-                f' = {P_v[i] / 1000:.1f} "кН"'
+                f'omega_(з {i + 1}) = {mu_k:.3f} dot {m0[i]:.0f} = {omega_z[i]:.0f} "кг"'
             )
         )
-    print()
-
-    # ---- (3.27) Stage lengths ----
-    l_k = []
-    for i in range(n):
-        length = 1.15 * weight[i].l_z * d_m[i]
-        l_k.append(length)
+        if i == 0:
+            print(
+                eq(
+                    f"P_(0 1) = {thrust[0].P_ud_r:.2f} dot {G0} dot {omega_z[0]:.0f} / {dt[0]:.1f}"
+                    f' = {P_r1 / 1000:.1f} "кН"'
+                )
+            )
+            print(
+                eq(
+                    f'P_("п"1) = {thrust[0].P_ud_v:.2f} dot {G0} dot {omega_z[0]:.0f} / {dt[0]:.1f}'
+                    f' = {P_v[0] / 1000:.1f} "кН"'
+                )
+            )
+        else:
+            print(
+                eq(
+                    f'P_("п"{i + 1}) = {thrust[i].P_ud_v:.2f} dot {G0} dot {omega_z[i]:.0f} / {dt[i]:.1f}'
+                    f' = {P_v[i] / 1000:.1f} "кН"'
+                )
+            )
         print(
             eq(
                 f"l_(к {i + 1}) approx 1.15 dot {weight[i].l_z:.1f} dot {d_m[i]:.2f}"
-                f' = {length:.2f} "м"'
+                f' = {l_k[i]:.2f} "м"'
             )
         )
-    print()
+        print()
 
     p_r1_cells = [f"${P_r1 / 1000:.1f}$", "$-$", "$-$"]
     rows = [
@@ -644,7 +629,7 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
     print("Найдем диаметр заряда по формуле $(3.37)$:")
     print('$ d_(з i) = d_(м i) - 2 delta_(к i) - 2 delta_("тз" i) $')
     print(
-        "где $delta_(к i)$ --- толщина корпуса, а $delta_(\"тз\" i)$ --- "
+        'где $delta_(к i)$ --- толщина корпуса, а $delta_("тз" i)$ --- '
         "толщина теплозащиты."
     )
     print(
@@ -664,66 +649,49 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
     print("Выберем значение $0.2$ в качестве коэффициента.")
     print()
     print("Найдем длину днищ по формуле $(3.41)$:")
-    print("$ l_(\"дн\" i) approx 0.3 d_(м i) $")
+    print('$ l_("дн" i) approx 0.3 d_(м i) $')
     print()
     print('Примем выступы концевых рулей $h=0.2 "м"$.')
     print()
     print("Найдем длины ступеней по формуле $(3.42)$:")
-    print("$ L_i = l_(з i) + l_(а i) + l_(\"дк\" i) + h + l_(в i) $")
+    print('$ L_i = l_(з i) + l_(а i) + l_("дк" i) + h + l_(в i) $')
     print()
     print("Проведем расчеты для всех ступеней по формулам $(3.28) - (3.42)$:")
     print()
 
-    # ---- Per-formula numeric results ----
+    # ---- Per-stage numeric results ----
     for i, g in enumerate(geo, 1):
+        stage_header(i)
         print(eq(f'l_(з {i}) = {g["l_z"]:.1f} dot {g["d"]:.2f} = {g["l_zi"]:.2f} "м"'))
-    print()
-    for i, g in enumerate(geo, 1):
         print(
             eq(
                 f"h_{i} = (0.37 dot {g['l_z']:.1f} - 0.30) dot {g['d']:.2f}"
                 f' = {g["h_slot"]:.3f} "м"'
             )
         )
-    print()
-    for i, g in enumerate(geo, 1):
         print(
-            eq(f'S_{i} = {K_S} dot {g["l_z"]:.1f} dot {g["d"]:.2f}^2 = {g["S"]:.2f} "м²"')
+            eq(
+                f'S_{i} = {K_S} dot {g["l_z"]:.1f} dot {g["d"]:.2f}^2 = {g["S"]:.2f} "м²"'
+            )
         )
-    print()
-    for i, g in enumerate(geo, 1):
         print(
             eq(
                 f'd_("кр" {i})^2 = (4 dot {g["S"]:.2f} dot {g["rho_u"]:.2f} dot '
-                f'sqrt({fmt(g["R"])} dot {g["T"]:.1f}))'
+                f"sqrt({fmt(g['R'])} dot {g['T']:.1f}))"
                 f"/(pi dot {g['K0']:.3f} dot {g['p_k']} dot 10^5 dot {N_NOZZLES})"
                 f' = {g["d_kr2"]:.4f} "м²"'
             )
         )
         print(eq(f'd_("кр" {i}) = sqrt({g["d_kr2"]:.4f}) = {g["d_kr"]:.3f} "м"'))
-    print()
-    for i, g in enumerate(geo, 1):
-        print(
-            eq(
-                f'F_("кр" {i}) = (pi dot {g["d_kr2"]:.4f})/4 = {g["F_kr"]:.4f} "м²"'
-            )
-        )
-    print()
-    for i, g in enumerate(geo, 1):
+        print(eq(f'F_("кр" {i}) = (pi dot {g["d_kr2"]:.4f})/4 = {g["F_kr"]:.4f} "м²"'))
         print(
             eq(
                 f"F_(a {i}) = {g['fa_fkp']:.2f} dot {g['F_kr']:.4f}"
                 f' = {g["F_a"]:.4f} "м²"'
             )
         )
-    print()
-    for i, g in enumerate(geo, 1):
         print(eq(f'd_(a {i}) = sqrt((4 dot {g["F_a"]:.4f})/pi) = {g["d_a"]:.3f} "м"'))
-    print()
-    for i, g in enumerate(geo, 1):
         print(eq(f'l_(в {i}) = 0.1 dot {g["d"]:.2f} = {g["l_v"]:.3f} "м"'))
-    print()
-    for i, g in enumerate(geo, 1):
         print(
             eq(
                 f"delta_(к {i}) = ({ETA} dot {g['p_k']} dot 10^5 dot {g['d']:.2f})"
@@ -732,8 +700,6 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
             )
         )
         print(eq(f'delta_("тз" {i}) = {g["delta_tz_mm"]:.2f} dot 10^(-3) "м"'))
-    print()
-    for i, g in enumerate(geo, 1):
         print(
             eq(
                 f"d_(з {i}) = {g['d']:.2f} - 2 dot {g['delta_k'] * 1e3:.2f} dot 10^(-3)"
@@ -741,33 +707,21 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
                 f' = {g["d_z"]:.3f} "м"'
             )
         )
-    print()
-    for i, g in enumerate(geo, 1):
         print(eq(f'd_(к {i}) = {D_K_BAR} dot {g["d_z"]:.3f} = {g["d_k"]:.3f} "м"'))
-    print()
-    for i, g in enumerate(geo, 1):
         print(
             eq(
                 f'l_("дк" {i}) = (({g["d_k"]:.3f} - {g["d_kr"]:.3f})/2)'
                 f' dot ctg({beta_deg}°) = {g["l_dk"]:.3f} "м"'
             )
         )
-    print()
-    for i, g in enumerate(geo, 1):
         print(
             eq(
-                f'l_(a {i}) = (({g["d_a"]:.3f} - {g["d_kr"]:.3f})/2)'
+                f"l_(a {i}) = (({g['d_a']:.3f} - {g['d_kr']:.3f})/2)"
                 f' dot ctg({beta_deg}°) = {g["l_a"]:.3f} "м"'
             )
         )
-    print()
-    for i, g in enumerate(geo, 1):
         print(eq(f'd_(в {i}) = 0.2 dot {g["d"]:.2f} = {g["d_v"]:.3f} "м"'))
-    print()
-    for i, g in enumerate(geo, 1):
         print(eq(f'l_("дн" {i}) approx 0.3 dot {g["d"]:.2f} = {g["l_dn"]:.3f} "м"'))
-    print()
-    for i, g in enumerate(geo, 1):
         print(
             eq(
                 f"L_{i} = {g['l_zi']:.2f} + {g['l_a']:.3f} + {g['l_dk']:.3f}"
@@ -775,7 +729,7 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
                 f' = {g["L"]:.2f} "м"'
             )
         )
-    print()
+        print()
 
     # ---- Summary table ----
     entries = [
@@ -799,6 +753,28 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
         param_row(label, [g[key] for g in geo], spec) for label, spec, key in entries
     ]
     param_table(rows)
+    print()
+
+    # ---- Condition (3.43): d_м ≥ d_a (1 + √2) for 4-nozzle layout ----
+    print(
+        "Проверим, подходит ли диаметр срезов сопла в 4-сопловой конфигурации"
+        " под диаметры миделя по условию $(3.43)$:"
+    )
+    print()
+    print("$ d_(м i) >= d_(a i) (1+sqrt(2)) $")
+    print()
+    factor = 1 + math.sqrt(2)
+    for i, g in enumerate(geo, 1):
+        d_mi = d_m[i - 1]
+        d_ai = g["d_a"]
+        rhs = d_ai * factor
+        verdict = "проходит" if d_mi >= rhs else "не проходит"
+        print(
+            eq(
+                f"d_(м {i}) = {d_mi:.2f} >= d_(a {i}) (1+sqrt(2))"
+                f' = {rhs:.2f} - "{verdict}"'
+            )
+        )
     print()
 
 

@@ -8,6 +8,10 @@
 // upper stage's nozzles; it drops together with that lower stage, exposing the
 // next stage's nozzles. The first stage has no skirt (its nozzles are bare).
 //
+// Stage 3 shares the same motor-case diameter as stage 2 (d_м3 = d_м2 = 1.16 m),
+// so its nozzle exit circle fits within the case and an ordinary interstage skirt
+// (belonging to stage 2) can enclose stage 3's nozzles — no separate tail section.
+//
 // Unit = METERS. OpenSCAD is unitless; set SCALE=1000 for a millimetre STL.
 //
 // Preview:  open in OpenSCAD, F5 = preview, F6 = render.
@@ -15,7 +19,7 @@
 //           (whole rocket / stage 2 & up / stage 3 & up / head) for aero analysis.
 //           e.g.  openscad -D 'PART="stage2up"' -o stage2up.stl rocket.scad
 
-$fn = 120;
+$fn = 360;
 
 // ---- Export selection (override via -D on the CLI) ----
 PART  = "all";   // "all" | "stage2up" | "stage3up" | "head"
@@ -23,35 +27,43 @@ SCALE = 1;       // 1 = metres (model units); 1000 = millimetres
 
 eps = 0.003;     // small overlap so stacked sections fuse into one manifold solid
 
-// ---- Stage cylinders (computed in main.py: motor-case dia + stage length) ----
-d1 = 1.57; L1 = 7.70;   // Stage 1
-d2 = 1.16; L2 = 4.45;   // Stage 2
-d3 = 0.83; L3 = 2.83;   // Stage 3
+// ============================================================================
+//  Calculated parameters — straight from main.py (index 0/1/2 = stage 1/2/3).
+//  These mirror the report tables; verify against the script output, do not
+//  tune them here.
+// ============================================================================
+d_m  = [1.57,  1.16,  1.16 ];  // motor-case diameter  d_(м i)    (table 3.13)
+L    = [7.67,  4.30,  2.83 ];  // overall stage length L_i        (table 3.14)
+d_kr = [0.166, 0.134, 0.086];  // nozzle throat dia    d_("кр" i)  (table 3.14)
+d_a  = [0.448, 0.462, 0.444];  // nozzle exit dia      d_(a i)     (table 3.14)
+l_a  = [0.387, 0.450, 0.492];  // nozzle bell length   l_(a i)     (divergent cone)
 
-// ---- Interstage shroud = skirt (lower dia) + cone; belongs to the LOWER stage,
-//      encloses the upper stage's nozzles, drops with the lower stage. ----
-H_sk12 = 0.40; H_cone21 = 0.40;   // stage 1/2 interstage (d1 -> d2)
-H_sk23 = 0.30; H_cone32 = 0.35;   // stage 2/3 interstage (d2 -> d3)
+n_noz   = 4;                   // nozzles per stage
+noz_gap = [1.3, 1.06, 1.06];     // per stage; >1 spreads the 4 bells apart (genus-0 mesh)
 
-// ---- Navigation + head (read from the CAD drawing; edit freely) ----
+// ============================================================================
+//  Structural / CAD-drawing parameters — chosen here, not produced by main.py.
+// ============================================================================
+
+// Interstage 1-2 shroud = skirt (d_m[0]) + cone; belongs to stage 1, encloses
+// stage 2's nozzles, drops with stage 1.
+H_sk12 = 0.40; H_cone21 = 0.40;   // stage 1/2 interstage (d_m[0] -> d_m[1])
+
+// Interstage 2-3 skirt; belongs to stage 2, encloses stage 3's nozzles, drops
+// with stage 2. No cone needed — d_м3 = d_м2 so diameters are equal.
+H_sk23 = 0.40;                     // stage 2/3 interstage skirt height
+
+// Navigation + head (read from the CAD drawing; edit freely).
 d_ns = 0.70; L_ns = 0.75;   // navigation module
 d_pl = 0.54; L_pl = 0.50;   // head / warhead body
 h_nose = 0.51;              // warhead nose cone
-H_s3nav   = 0.18;           // adapter stage 3 -> nav  (0.83 -> 0.70)
+H_s3nav   = 0.18;           // adapter stage 3 -> nav  (1.16 -> 0.70)
 H_navhead = 0.18;           // adapter nav -> head     (0.70 -> 0.54)
 
-// ---- Nozzles: 4 per stage, after-critical (divergent) cone only, from main.py ----
-//      each bell = throat d_kr (top) -> exit d_a (bottom), length l_a   (3.31-3.39)
-n_noz      = 4;
-noz_gap    = 1.06;                   // >1 keeps the 4 bells distinct (genus-0 mesh)
-noz_throat = [0.167, 0.135, 0.086];  // d_kr  throat dia   (stage 1/2/3)
-noz_exit   = [0.450, 0.566, 0.444];  // d_a   exit dia
-noz_bell   = [0.389, 0.593, 0.492];  // l_a   after-critical (divergent) length
-
-// ---- Colours (preview only; STL has no colour) ----
-C_S1 = [0.70, 0.70, 0.72];
-C_S2 = [0.76, 0.76, 0.78];
-C_S3 = [0.82, 0.82, 0.84];
+// Colours (preview only; STL has no colour). C_S indexed by stage.
+C_S  = [[0.70, 0.70, 0.72],   // stage 1
+        [0.76, 0.76, 0.78],   // stage 2
+        [0.82, 0.82, 0.84]];  // stage 3
 C_NAV = [0.30, 0.50, 0.80];   // navigation block
 C_PL  = [0.80, 0.30, 0.30];   // warhead
 C_STR = [0.45, 0.45, 0.48];   // structure: skirts, cones, nose, nozzles
@@ -67,8 +79,8 @@ module seg_cone(z, h, d_lo, d_hi) translate([0, 0, z]) frustum(d_lo, d_hi, h);
 
 // 4 after-critical nozzle bells hanging below the stage base z_top (throat at z_top)
 module nozzles(z_top, st) {
-    de = noz_exit[st]; dt = noz_throat[st]; h = noz_bell[st];
-    br = de / sqrt(2) * noz_gap;   // bolt circle: 4 bells just clear of each other
+    de = d_a[st]; dt = d_kr[st]; h = l_a[st];
+    br = de / sqrt(2) * noz_gap[st];   // bolt circle: spread the 4 bells per stage
     for (i = [0 : n_noz - 1])
         rotate([0, 0, 45 + i * 360 / n_noz])
             translate([br, 0, z_top - h])
@@ -77,13 +89,12 @@ module nozzles(z_top, st) {
 
 // ---------- cumulative z (stage-1 base at z = 0) ----------
 z_body1  = 0;
-z_sk12   = z_body1 + L1;       // interstage skirt 1-2 (d1, encloses stage-2 nozzles)
-z_cone21 = z_sk12 + H_sk12;    // cone d1 -> d2
+z_sk12   = z_body1 + L[0];     // interstage skirt 1-2 (d_m[0], encloses stage-2 nozzles)
+z_cone21 = z_sk12 + H_sk12;    // cone d_m[0] -> d_m[1]
 z_body2  = z_cone21 + H_cone21;
-z_sk23   = z_body2 + L2;       // interstage skirt 2-3 (d2, encloses stage-3 nozzles)
-z_cone32 = z_sk23 + H_sk23;    // cone d2 -> d3
-z_body3  = z_cone32 + H_cone32;
-z_s3nav  = z_body3 + L3;
+z_sk23   = z_body2 + L[1];     // interstage skirt 2-3 (d_m[1], encloses stage-3 nozzles)
+z_body3  = z_sk23 + H_sk23;
+z_s3nav  = z_body3 + L[2];
 z_nav    = z_s3nav + H_s3nav;
 z_navhead = z_nav + L_ns;
 z_head   = z_navhead + H_navhead;
@@ -91,34 +102,32 @@ z_nose   = z_head + L_pl;
 z_top    = z_nose + h_nose;
 
 // ---------- section groups (defined in global coordinates) ----------
-// Each group carries its own (bare) nozzles + the interstage shroud ABOVE it that
-// encloses the NEXT stage's nozzles. Dropping a group exposes the next stage's nozzles.
+// Stage 1 carries the interstage shroud above it that encloses stage 2's nozzles;
+// dropping stage 1 exposes them. Stage 2 carries the interstage skirt that encloses
+// stage 3's nozzles; dropping stage 2 exposes them.
 
 module stage1_group() {
     color(C_STR) nozzles(z_body1, 0);              // bare (no skirt on stage 1)
-    color(C_S1)  seg_tube(z_body1, L1, d1);
+    color(C_S[0]) seg_tube(z_body1, L[0], d_m[0]);
     color(C_STR) {
-        seg_tube(z_sk12, H_sk12, d1);              // skirt enclosing stage-2 nozzles
-        seg_cone(z_cone21, H_cone21, d1, d2);
+        seg_tube(z_sk12, H_sk12, d_m[0]);          // skirt enclosing stage-2 nozzles
+        seg_cone(z_cone21, H_cone21, d_m[0], d_m[1]);
     }
 }
 
 module stage2_group() {
     color(C_STR) nozzles(z_body2, 1);              // exposed once stage 1 drops
-    color(C_S2)  seg_tube(z_body2, L2, d2);
-    color(C_STR) {
-        seg_tube(z_sk23, H_sk23, d2);              // skirt enclosing stage-3 nozzles
-        seg_cone(z_cone32, H_cone32, d2, d3);
-    }
+    color(C_S[1]) seg_tube(z_body2, L[1], d_m[1]);
+    color(C_STR) seg_tube(z_sk23, H_sk23, d_m[1]); // skirt enclosing stage-3 nozzles
 }
 
 module stage3_group() {
     color(C_STR) nozzles(z_body3, 2);              // exposed once stage 2 drops
-    color(C_S3)  seg_tube(z_body3, L3, d3);
+    color(C_S[2]) seg_tube(z_body3, L[2], d_m[2]); // motor case
 }
 
 module nav_group() {
-    color(C_STR) seg_cone(z_s3nav, H_s3nav, d3, d_ns);
+    color(C_STR) seg_cone(z_s3nav, H_s3nav, d_m[2], d_ns);
     color(C_NAV) seg_tube(z_nav, L_ns, d_ns);
     color(C_STR) seg_cone(z_navhead, H_navhead, d_ns, d_pl);
 }
@@ -139,21 +148,19 @@ module assembly(part) {
     head_group();   // present in every configuration
 }
 
-// aft-most z of each configuration (nozzle exit plane), to re-zero export to z = 0
-function part_base_z(part) =
-    part == "head"     ? z_head :
-    part == "stage3up" ? z_body3 - noz_bell[2] :
-    part == "stage2up" ? z_body2 - noz_bell[1] :
-                         z_body1 - noz_bell[0];
-
-scale(SCALE) translate([0, 0, -part_base_z(PART)]) assembly(PART);
+// CFD orientation (arc-case convention): lay the rocket axis on +x with the nose
+// tip at x = 0 pointing upstream (-x), so the freestream travels +x and meets the
+// nose first. translate(-z_top) drops the nose tip (local z_top, present in every
+// configuration) onto the origin; rotate([0,-90,0]) then maps the +z build axis
+// onto +x, placing the aft-most plane at +x = L_model. Units stay in metres
+// (SCALE = 1), so the OpenFOAM blockMesh/snappy read it with scale 1.
+scale(SCALE) rotate([0, -90, 0]) translate([0, 0, -z_top]) assembly(PART);
 
 // ---------- verification echo (Console window) ----------
 echo(str("PART=", PART, "  SCALE=", SCALE));
-echo(str("Stage 1: d=", d1, " L=", L1));
-echo(str("Stage 2: d=", d2, " L=", L2));
-echo(str("Stage 3: d=", d3, " L=", L3));
-echo(str("Nav    : d=", d_ns, " L=", L_ns));
-echo(str("Head   : d=", d_pl, " L=", L_pl, " + nose ", h_nose));
-echo(str("Nozzles/stage=", n_noz, "  throat=", noz_throat, " exit=", noz_exit, " bell=", noz_bell));
+echo(str("Stage diameters d_m = ", d_m, " m"));
+echo(str("Stage lengths   L   = ", L, " m"));
+echo(str("Interstage 2-3 skirt  H_sk23 = ", H_sk23, " m"));
+echo(str("Nav: d=", d_ns, " L=", L_ns, "   Head: d=", d_pl, " L=", L_pl, " + nose ", h_nose));
+echo(str("Nozzles/stage=", n_noz, "  throat d_kr=", d_kr, " exit d_a=", d_a, " bell l_a=", l_a, " gap=", noz_gap));
 echo(str("Full height (excl. nozzles) = ", z_top, " m"));
