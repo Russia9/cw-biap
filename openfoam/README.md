@@ -30,8 +30,9 @@ uv run python openfoam/gen_case.py --part all --regime subsonic   --Ma 0.7 --alp
 
 Options: `--part {all,stage2up,stage3up,head}`, `--regime {subsonic,supersonic}`,
 `--Ma`, `--alpha` (deg), `--p`/`--T` (default sea-level ISA 101325 Pa / 288.15 K),
-`--yplus` (default 325), `--layers` (6), `--expansion` (1.2), `--np` (6),
-`--out`, `--no-stl` (reuse existing STLs).
+`--yplus` (default 325), `--layers` (override auto layer count; auto gives
+Ma 4 about 12 and never below 6),
+`--expansion` (1.2), `--np` (6), `--out`, `--no-stl` (reuse existing STLs).
 
 The generator builds the part STL (`make <part>.stl`), reads its bounding box,
 and **adapts the mesh to the geometry** — domain (`-5L … 11L`, farfield `5L`),
@@ -72,9 +73,10 @@ postProcess -func yPlus -latestTime    # or read the yPlus log from a short run
 ```
 
 If y+ drifts, rerun the generator with an adjusted `--yplus` (it scales the first
-layer linearly) or `--layers`, then `./Allrun.pre` again. **alpha-only sweeps
-reuse the same mesh** (geometry unchanged — only `0/U` differs); a new Mach
-changes the layer sizing, so regenerate + remesh for a new representative Mach.
+layer linearly) or an explicit `--layers` override, then `./Allrun.pre` again.
+**alpha-only sweeps reuse the same mesh** (geometry unchanged — only `0/U`
+differs); a new Mach changes the layer sizing, so regenerate + remesh for a new
+representative Mach.
 
 ## Coefficient reference
 
