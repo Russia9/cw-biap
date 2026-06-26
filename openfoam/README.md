@@ -54,7 +54,8 @@ count stays ~constant across parts. `subsonic → rhoSimpleFoam`,
 
 ```bash
 cd openfoam/all/supersonic
-./Allrun.pre      # blockMesh -> surfaceFeatureExtract -> snappyHexMesh -> checkMesh
+./Allrun.pre      # blockMesh, surfaceFeatureExtract, parallel snappyHexMesh,
+                  #   reconstruct to serial, checkMesh
 ./Allrun          # decomposePar -> mpirun -np <np> <solver> -parallel -> reconstructPar
 ```
 

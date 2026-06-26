@@ -1,0 +1,8 @@
+#!/bin/sh
+cd "${0%/*}" || exit                                # run from this directory
+. "${WM_PROJECT_DIR:?source an OpenFOAM environment first}/bin/tools/CleanFunctions"
+
+cleanCase
+rm -rf constant/extendedFeatureEdgeMesh constant/triSurface/*.eMesh > /dev/null 2>&1
+
+#------------------------------------------------------------------------------

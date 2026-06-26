@@ -1,0 +1,13 @@
+#!/bin/sh
+cd "${0%/*}" || exit                                # run from this directory
+. "${WM_PROJECT_DIR:?source an OpenFOAM environment first}/bin/tools/RunFunctions"
+
+# Mesh first if it has not been built yet.
+[ -f constant/polyMesh/points ] || ./Allrun.pre
+
+# Solve in parallel: rhoSimpleFoam on 6 subdomains.
+runApplication decomposePar
+runParallel rhoSimpleFoam
+runApplication reconstructPar -latestTime
+
+#------------------------------------------------------------------------------
