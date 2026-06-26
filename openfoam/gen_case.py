@@ -186,7 +186,7 @@ def main() -> None:
     ap.add_argument(
         "--expansion", type=float, default=1.2, help="layer expansion ratio"
     )
-    ap.add_argument("--np", type=int, default=6, help="MPI subdomains")
+    ap.add_argument("--np", type=int, default=12, help="MPI subdomains")
     ap.add_argument(
         "--out",
         type=Path,

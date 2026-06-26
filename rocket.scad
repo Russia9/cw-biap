@@ -38,8 +38,6 @@ d_kr = [0.168, 0.135, 0.086];  // nozzle throat dia    d_("кр" i)  (table 3.14
 d_a  = [0.452, 0.466, 0.447];  // nozzle exit dia      d_(a i)     (table 3.14)
 l_a  = [0.390, 0.454, 0.495];  // nozzle bell length   l_(a i)     (divergent cone)
 
-n_noz   = 4;                   // nozzles per stage
-noz_gap = [1.3, 1.06, 1.06];     // per stage; >1 spreads the 4 bells apart (genus-0 mesh)
 
 // ============================================================================
 //  Structural / CAD-drawing parameters — chosen here, not produced by main.py.
@@ -73,16 +71,6 @@ module cone_tip(d, h)         cylinder(d1 = d, d2 = 0, h = h);
 module seg_tube(z, h, d)          translate([0, 0, z - eps]) tube(d, h + 2 * eps);
 module seg_cone(z, h, d_lo, d_hi) translate([0, 0, z]) frustum(d_lo, d_hi, h);
 
-// 4 after-critical nozzle bells hanging below the stage base z_top (throat at z_top)
-module nozzles(z_top, st) {
-    de = d_a[st]; dt = d_kr[st]; h = l_a[st];
-    br = de / sqrt(2) * noz_gap[st];   // bolt circle: spread the 4 bells per stage
-    for (i = [0 : n_noz - 1])
-        rotate([0, 0, 45 + i * 360 / n_noz])
-            translate([br, 0, z_top - h])
-                cylinder(d1 = de, d2 = dt, h = h + eps);
-}
-
 // ---------- cumulative z (stage-1 base at z = 0) ----------
 z_body1  = 0;
 z_sk12   = z_body1 + L[0];     // interstage skirt 1-2 (d_m[0], encloses stage-2 nozzles)
@@ -102,7 +90,6 @@ z_top    = z_nose + h_nose;
 // stage 3's nozzles; dropping stage 2 exposes them.
 
 module stage1_group() {
-    color(C_STR) nozzles(z_body1, 0);              // bare (no skirt on stage 1)
     color(C_S[0]) seg_tube(z_body1, L[0], d_m[0]);
     color(C_STR) {
         seg_tube(z_sk12, H_sk12, d_m[0]);          // skirt enclosing stage-2 nozzles
@@ -111,13 +98,11 @@ module stage1_group() {
 }
 
 module stage2_group() {
-    color(C_STR) nozzles(z_body2, 1);              // exposed once stage 1 drops
     color(C_S[1]) seg_tube(z_body2, L[1], d_m[1]);
 }
 
 module stage3_group() {
-    color(C_STR) nozzles(z_body3, 2);              // exposed once stage 2 drops
-    color(C_S[2]) seg_tube(z_body3, L[2], d_m[2]); // motor case
+    color(C_S[2]) seg_tube(z_body3, L[2], d_m[2]);
 }
 
 module nav_group() {
@@ -156,5 +141,5 @@ echo(str("Stage diameters d_m = ", d_m, " m"));
 echo(str("Stage lengths   L   = ", L, " m"));
 
 echo(str("Nav: d=", d_ns, " L=", L_ns, "   Head: d=", d_pl, " L=", L_pl, " + nose ", h_nose));
-echo(str("Nozzles/stage=", n_noz, "  throat d_kr=", d_kr, " exit d_a=", d_a, " bell l_a=", l_a, " gap=", noz_gap));
+echo(str("Nozzle ref (not modelled): throat d_kr=", d_kr, " exit d_a=", d_a, " bell l_a=", l_a));
 echo(str("Full height (excl. nozzles) = ", z_top, " m"));

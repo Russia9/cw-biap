@@ -22,21 +22,35 @@ ddtSchemes
 gradSchemes
 {
     default         Gauss linear;
-    grad(U)         cellLimited Gauss linear 1;
+
+    limited         cellLimited Gauss linear 1;
+    grad(U)         $limited;
+    grad(k)         $limited;
+    grad(omega)     $limited;
 }
 
 divSchemes
 {
     default         none;
-    div(phi,U)      bounded Gauss linearUpwindV grad(U);
-    div(phi,e)      bounded Gauss linearUpwind grad(e);
-    div(phi,h)      bounded Gauss linearUpwind grad(h);
-    div(phi,K)      bounded Gauss linearUpwind grad(K);
-    div(phi,Ekp)    bounded Gauss linearUpwind grad(Ekp);
-    div(phid,p)     bounded Gauss upwind;
-    div(phi,k)      bounded Gauss upwind;
-    div(phi,omega)  bounded Gauss upwind;
-    div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear;
+
+    div(phi,U)      bounded Gauss linearUpwind limited;
+
+    energy          bounded Gauss linearUpwind limited;
+    div(phi,e)      $energy;
+    div(phi,h)      $energy;
+    div(phi,K)      $energy;
+    div(phi,Ekp)    $energy;
+
+    turbulence      bounded Gauss upwind;
+    div(phi,k)      $turbulence;
+    div(phi,omega)  $turbulence;
+
+    // Non-transonic SIMPLE uses the rho-interpolated pressure flux; the
+    // div(phid,p) entry is kept for the transonic branch (see fvSolution).
+    div(phid,p)                    Gauss upwind;
+    div((phi|interpolate(rho)),p)  bounded Gauss upwind;
+
+    div(((rho*nuEff)*dev2(T(grad(U)))))    Gauss linear;
 }
 
 laplacianSchemes

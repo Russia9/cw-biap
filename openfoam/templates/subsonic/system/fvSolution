@@ -37,7 +37,12 @@ solvers
 SIMPLE
 {
     nNonOrthogonalCorrectors 0;
-    transonic       yes;            // high-subsonic (Ma ~0.7) compressible SIMPLE
+
+    // Non-transonic compressible SIMPLE: at Ma ~0.7 the rho-interpolated
+    // pressure flux is far more robust than transonic mode. pMin/pMaxFactor
+    // clamp p (hence rho = psi*p) so a bad base-region cell cannot run away.
+    pMinFactor      0.1;
+    pMaxFactor      2;
 
     residualControl
     {
@@ -52,12 +57,12 @@ relaxationFactors
 {
     fields
     {
-        p           0.3;
-        rho         0.05;
+        p           0.7;
+        rho         0.01;
     }
     equations
     {
-        U           0.7;
+        U           0.3;
         e           0.7;
         "(k|omega)" 0.7;
     }
