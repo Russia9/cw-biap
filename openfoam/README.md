@@ -78,6 +78,32 @@ layer linearly) or an explicit `--layers` override, then `./Allrun.pre` again.
 differs); a new Mach changes the layer sizing, so regenerate + remesh for a new
 representative Mach.
 
+## Sweep study
+
+`sweep.py` runs the whole `(part, Ma, alpha)` matrix unattended, in a priority
+order, picking the regime per Mach (`Ma < 1 → subsonic`, else supersonic):
+
+```bash
+uv run python openfoam/sweep.py --dry-run    # print the 81-case ordered queue, no run
+uv run python openfoam/sweep.py              # full run (OpenFOAM env must be sourced)
+uv run python openfoam/sweep.py --retry-failed
+```
+
+**Order.** All *preferential* cases first — across every part (`all → stage2up →
+stage3up → head`) — then the rest, by part then Ma then alpha. A case is
+preferential when both its Ma and its alpha are flagged in the matrix at the top
+of `sweep.py`.
+
+**Robust + resumable.** Per-case status lives in `sweep_state.json` (written
+atomically); a rerun skips completed cases and a failing case is logged and
+skipped, not fatal. Mesh depends only on `(part, Ma)`, so the alphas of one
+group share a single `snappyHexMesh` run (22 meshes for 81 cases). Coefficients
+are aggregated into `sweep_results.csv`; per-case OpenFOAM logs and a failed
+case's `sweep.error` stay in the case dir. A pre-flight check (OpenFOAM on PATH,
+STLs buildable) fails fast before committing hours. Useful flags: `--np`,
+`--only-part`, `--max-cases`, `--mesh-timeout`/`--solve-timeout`,
+`--no-mesh-reuse`, `--subsonic-max`.
+
 ## Coefficient reference
 
 `forceCoeffs` uses a **single fixed reference taken from part=all** — frontal
