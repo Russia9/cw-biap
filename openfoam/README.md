@@ -104,6 +104,23 @@ STLs buildable) fails fast before committing hours. Useful flags: `--np`,
 `--only-part`, `--max-cases`, `--mesh-timeout`/`--solve-timeout`,
 `--no-mesh-reuse`, `--subsonic-max`.
 
+## Convergence CSVs
+
+`sweep_results.csv` keeps only each case's *final* coefficients. To check a case
+actually converged (Cd/Cl/Cm flattened out, not still drifting), `convergence.py`
+reads the per-iteration history OpenFOAM writes to
+`<case>/postProcessing/forceCoeffs/<time>/coefficient.dat` and emits one tidy CSV
+per case into `results/` — `Time` plus every coefficient column, one row per
+iteration, ready to plot:
+
+```bash
+uv run python openfoam/convergence.py                 # all cases -> openfoam/results/*.csv
+uv run python openfoam/convergence.py --only-part all
+```
+
+It's disk-driven (parses whatever produced output, no OpenFOAM env needed), merges
+restart time-dirs into one monotonic history, and warns-and-skips empty cases.
+
 ## Coefficient reference
 
 `forceCoeffs` uses a **single fixed reference taken from part=all** — frontal
