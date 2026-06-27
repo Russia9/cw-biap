@@ -121,6 +121,22 @@ uv run python openfoam/convergence.py --only-part all
 It's disk-driven (parses whatever produced output, no OpenFOAM env needed), merges
 restart time-dirs into one monotonic history, and warns-and-skips empty cases.
 
+## Plots & averages
+
+`plot_coeffs.py` consumes those `results/*.csv` and, per case, writes one PNG with
+two stacked panels (`Cd/Cl/Cs` on top, `CmPitch/CmRoll/CmYaw` below) vs iteration,
+with the averaging window shaded. It also writes one `results/averages.csv` row per
+case — `part, regime, Ma, alpha, n_iters` plus the **mean and std** of each of the
+six coefficients over the last `--window` iterations:
+
+```bash
+uv run python openfoam/plot_coeffs.py              # PNGs -> results/plots/, averages.csv
+uv run python openfoam/plot_coeffs.py --window 25  # average over the last 25 iterations
+```
+
+Re-runnable as cases arrive: it rebuilds the plots and `averages.csv` from whatever
+result CSVs currently exist, and warns-and-skips short/unreadable ones.
+
 ## Coefficient reference
 
 `forceCoeffs` uses a **single fixed reference taken from part=all** — frontal
