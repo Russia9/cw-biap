@@ -12,8 +12,8 @@ type Shape int
 const (
 	// ShapeExp is the exponential front-loaded arc (the original program law).
 	ShapeExp Shape = iota
-	// ShapeCos is the half-cosine arc ported from the C++ reference
-	// (traj-example/model.hpp).
+	// ShapeCos is the chained half-cosine arc generalized from the C++
+	// reference (traj-example/model.hpp).
 	ShapeCos
 )
 
@@ -21,6 +21,7 @@ const (
 const (
 	defaultKExp = 3.0 // exp: >0 front-loads the turn, 0 ⇒ linear
 	defaultKCos = 1.1 // cos: power on normalized time (C++ reference value)
+	minKCos     = 1.0 // lower values make visually sharp, non-smooth starts
 )
 
 // PitchSegment is one arc of the pitch program. It interpolates from its entry
@@ -30,7 +31,7 @@ type PitchSegment struct {
 	TEnd  float64 // absolute segment end time [s]
 	Theta float64 // terminal pitch angle ϑ [rad]
 	Shape Shape
-	K     float64 // shape exponent (see defaultKExp / defaultKCos)
+	K     float64 // shape exponent (cos values below minKCos are normalized)
 }
 
 // PitchProgram is the programmed pitch ϑ_пр(t) [rad] on the active leg: a
@@ -58,7 +59,8 @@ func (p PitchProgram) Theta(t float64) float64 {
 }
 
 // Rate returns the programmed pitch rate ϑ̇_пр(t) [rad/s] as the analytical
-// derivative of the active arc (0 during the vertical hold and past the program).
+// derivative of the active arc (0 during the vertical hold, at cosine joints,
+// and past the program).
 func (p PitchProgram) Rate(t float64) float64 {
 	if t <= p.TVert || len(p.Segments) == 0 {
 		return 0
@@ -113,15 +115,25 @@ func arcExp(a, b, t0, t1, k, t float64) float64 {
 	return b + (a-b)*w
 }
 
-// arcCos is the half-cosine segment from a (at t0) to b (at t1):
+// arcCos is the chained half-cosine segment from a (at t0) to b (at t1):
 //
 //	ϑ = (a+b)/2 + (a−b)/2 · cos(π · s^k),  s = (t−t0)/(t1−t0)
 //
-// It reaches a at t0 and b at t1. k≥1 starts the turn smoothly (ϑ̇=0 at t0). The
-// C++ reference uses k=1.1.
+// This is the local-segment form of the C++ program formula, with a equal to the
+// previous segment's terminal angle (or 90° for the first segment). It reaches a
+// at t0 and b at t1. k≥1 starts and ends the turn smoothly (ϑ̇=0 at the joints).
+// The C++ reference uses k=1.1.
 func arcCos(a, b, t0, t1, k, t float64) float64 {
+	k = smoothCosK(k)
 	s := (t - t0) / (t1 - t0)
 	return (a+b)/2 + (a-b)/2*math.Cos(math.Pi*math.Pow(s, k))
+}
+
+func smoothCosK(k float64) float64 {
+	if k < minKCos {
+		return minKCos
+	}
+	return k
 }
 
 // arcRate is the analytical time derivative of the corresponding arc [rad/s].
@@ -129,9 +141,10 @@ func arcRate(sh Shape, a, b, t0, t1, k, t float64) float64 {
 	tau := t1 - t0
 	s := (t - t0) / tau
 	if sh == ShapeCos {
-		if s <= 0 {
-			return 0 // s^(k-1) → 0 for k≥1; defined to 0 at the joint
+		if s <= 0 || s >= 1 {
+			return 0 // defined exactly at joints to avoid roundoff in diagnostics
 		}
+		k = smoothCosK(k)
 		return -(a - b) / 2 * math.Sin(math.Pi*math.Pow(s, k)) * math.Pi * k * math.Pow(s, k-1) / tau
 	}
 	if math.Abs(k) < 1e-9 {

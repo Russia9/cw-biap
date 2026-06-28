@@ -2,11 +2,9 @@
 
 Runs the Go simulator (traj/main) as a black box and tunes the pitch program so
 the simulated surface range hits a target (default 12000 km) while respecting the
-§4.4 constraints, which enter the objective as penalty terms. Stage 1 is split
-into two sub-arcs at t_split, giving the search a dedicated handle on the subsonic
-α limit. Free parameters: terminal angles ϑ_k11/ϑ_k12/ϑ_k2/ϑ_k3 [deg], the
-vertical-hold t_в and split time t_split [s], and the per-arc shape rates
-k_exp11/12/2/3. The integrator itself stays in Go.
+§4.4 constraints, which enter the objective as penalty terms. Free parameters:
+terminal angles ϑ_k1/ϑ_k2/ϑ_k3 [deg], the vertical-hold t_в [s], and the per-arc
+shape exponents k1/2/3. The integrator itself stays in Go.
 
 The base rocket (stage masses/thrust and the per-stage arc *shapes*) is read from
 rocket.json; the optimizer only varies the continuous parameters above, writing a
@@ -48,16 +46,24 @@ def build() -> None:
 def config_from_x(x) -> dict:
     """Map the CMA-ES vector onto a rocket config (arc shapes kept from base).
 
-    x = [ϑ_k11, ϑ_k12, ϑ_k2, ϑ_k3, t_в, t_split, k_exp11, k_exp12, k_exp2, k_exp3]
+    x = [ϑ_k1, ϑ_k2, ϑ_k3, t_в, k1, k2, k3]
     """
     c = copy.deepcopy(_BASE)
-    c["t_vertical"] = x[4]
+    c["t_vertical"] = x[3]
     s1, s2, s3 = c["stages"][0]["pitch"], c["stages"][1]["pitch"], c["stages"][2]["pitch"]
-    s1[0].update({"theta_deg": x[0], "t_end": x[5], "k": x[6]})  # stage-1 split sub-arc
-    s1[1].update({"theta_deg": x[1], "k": x[7]})                 # stage-1 to burnout
-    s2[0].update({"theta_deg": x[2], "k": x[8]})                 # stage-2
-    s3[0].update({"theta_deg": x[3], "k": x[9]})                 # stage-3
+    s1[0].update({"theta_deg": x[0], "k": x[4]})                 # stage-1
+    s2[0].update({"theta_deg": x[1], "k": x[5]})                 # stage-2
+    s3[0].update({"theta_deg": x[2], "k": x[6]})                 # stage-3
     return c
+
+
+def k_lower_bounds() -> list[float]:
+    arcs = [
+        _BASE["stages"][0]["pitch"][0],
+        _BASE["stages"][1]["pitch"][0],
+        _BASE["stages"][2]["pitch"][0],
+    ]
+    return [1.0 if arc.get("shape") == "cos" else -8.0 for arc in arcs]
 
 
 def run_sim(x, h, metrics=True, out=None):
@@ -97,13 +103,10 @@ def objective(x, target_km, h) -> float:
     f += W_CON * pen(m["max_pitch_rate_dps"], m["lim_theta_dot"])
     f += W_CON * pen(m["max_q_pa"], m["lim_qmax"])
 
-    # Keep the program physical: expect ϑ_k11 ≥ ϑ_k12 ≥ ϑ_k2 ≥ ϑ_k3, and the
-    # stage-1 split after the vertical hold (t_в < t_split).
+    # Keep the program physical: expect ϑ_k1 ≥ ϑ_k2 ≥ ϑ_k3.
     f += W_MONO * (
         max(0.0, x[1] - x[0]) ** 2
         + max(0.0, x[2] - x[1]) ** 2
-        + max(0.0, x[3] - x[2]) ** 2
-        + max(0.0, x[4] - x[5]) ** 2
     )
     return f
 
@@ -129,21 +132,22 @@ def main() -> None:
     ap.add_argument(
         "--x0",
         type=float,
-        nargs=10,
-        default=[80.0, 72.0, 46.0, 28.0, 10.0, 25.0, 3.0, 3.0, 3.0, 3.0],
-        help="initial ϑ_k11/k12/k2/k3 [deg], t_в/t_split [s], k_exp11/12/2/3",
+        nargs=7,
+        default=[72.0, 46.0, 28.0, 10.0, 3.0, 3.0, 3.0],
+        help="initial ϑ_k1/k2/k3 [deg], t_в [s], k1/2/3",
     )
     args = ap.parse_args()
 
     build()
 
-    # Per-dimension steps: angles [deg], t_в/t_split [s], k_exp [-]. sigma0 scales all.
+    # Per-dimension steps: angles [deg], t_в [s], k [-]. sigma0 scales all.
+    k_min = k_lower_bounds()
     opts = {
         "bounds": [
-            [5.0, 5.0, 5.0, 5.0, 5.0, 10.0, -8.0, -8.0, -8.0, -8.0],
-            [89.0, 89.0, 89.0, 89.0, 40.0, 60.0, 8.0, 8.0, 8.0, 8.0],
+            [5.0, 5.0, 5.0, 5.0, *k_min],
+            [89.0, 89.0, 89.0, 40.0, 8.0, 8.0, 8.0],
         ],
-        "CMA_stds": [10.0, 10.0, 10.0, 10.0, 8.0, 10.0, 3.0, 3.0, 3.0, 3.0],
+        "CMA_stds": [10.0, 10.0, 10.0, 8.0, 3.0, 3.0, 3.0],
         "maxiter": args.maxiter,
         "verb_disp": 10,
     }
@@ -152,8 +156,8 @@ def main() -> None:
 
     best = es.result.xbest
     print(
-        f"\nbest params: ϑ_k11={best[0]:.3f} ϑ_k12={best[1]:.3f} ϑ_k2={best[2]:.3f} ϑ_k3={best[3]:.3f} deg, "
-        f"t_в={best[4]:.3f} t_split={best[5]:.3f} s, k_exp={best[6]:.2f}/{best[7]:.2f}/{best[8]:.2f}/{best[9]:.2f}"
+        f"\nbest params: ϑ_k1={best[0]:.3f} ϑ_k2={best[1]:.3f} ϑ_k3={best[2]:.3f} deg, "
+        f"t_в={best[3]:.3f} s, k={best[4]:.2f}/{best[5]:.2f}/{best[6]:.2f}"
     )
     m = metrics(best, args.h_final)
     print(

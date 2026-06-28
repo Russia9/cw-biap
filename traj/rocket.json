@@ -11,10 +11,7 @@
       "isp_vac": 252.75,
       "dm": 1.58,
       "part": "all",
-      "pitch": [
-        { "t_end": 25.0, "theta_deg": 80, "shape": "cos", "k": 3.0 },
-        { "theta_deg": 72, "shape": "cos", "k": 3.0 }
-      ]
+      "pitch": [{ "theta_deg": 72, "shape": "cos", "k": 3.0 }]
     },
     {
       "m0": 8702,

@@ -42,7 +42,7 @@ ax[0, 1].plot(df["t"], df["V"])
 ax[0, 1].set(xlabel="t, s", ylabel="V, m/s", title="Velocity")
 marks(ax[0, 1])
 
-ax[0, 2].plot(df["t"], df["vartheta"], label="ϑ (pitch)")
+ax[0, 2].plot(aut["t"], aut["vartheta"], label="ϑ (pitch program)")
 ax[0, 2].plot(df["t"], df["theta"], label="θ (flight angle)")
 ax[0, 2].plot(df["t"], df["alpha"], label="α")
 ax[0, 2].set(xlabel="t, s", ylabel="deg", title="Angles")
@@ -80,7 +80,7 @@ marks(ax[1, 3])
 ax[1, 3].set_xlim(0, t_aut)
 
 # Third row: angles, Mach and altitude over the powered (active) segment only.
-ax[2, 0].plot(aut["t"], aut["vartheta"], label="ϑ (pitch)")
+ax[2, 0].plot(aut["t"], aut["vartheta"], label="ϑ (pitch program)")
 ax[2, 0].plot(aut["t"], aut["theta"], label="θ (flight angle)")
 ax[2, 0].plot(aut["t"], aut["alpha"], label="α")
 ax[2, 0].set(xlabel="t, s", ylabel="deg", title="Angles (АУТ)")
