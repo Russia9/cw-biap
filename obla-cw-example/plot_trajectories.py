@@ -62,6 +62,7 @@ subdirs = sorted([d for d in out_dir.iterdir() if d.is_dir()])
 
 # Create figure (academic paper format - approximately 3.5 inches for single column)
 fig, ax = plt.subplots(figsize=(7, 7))
+fig_alpha, ax_alpha = plt.subplots(figsize=(8, 4))
 
 # Draw Moon surface
 # Moon center is at (0, -R_M) since (0, 0) is on the surface
@@ -97,11 +98,13 @@ for idx, subdir in enumerate(subdirs):
     df = pd.read_csv(traj_file, sep=";")
 
     # Extract data and convert to starting coordinate system
+    t = df["t, с"].values
     x = df["x, м"].values
     y = (
         df["y, м"].values - R_M
     )  # Convert to starting coordinates where (0,0) is on surface
     m = df["m, кг"].values
+    alpha = df["alpha, град."].values
 
     # Calculate dm (mass difference between consecutive points)
     dm = np.diff(m)
@@ -154,6 +157,52 @@ for idx, subdir in enumerate(subdirs):
             zorder=5,
         )
 
+    # Plot angle of attack on a separate chart, skipping coast segments
+    segments = []
+    current_segment_start = 0
+    current_is_coast = dm[0] == 0
+    for i in range(1, len(dm)):
+        is_coast = dm[i] == 0
+        if is_coast != current_is_coast:
+            segments.append((current_segment_start, i, current_is_coast))
+            current_segment_start = i
+            current_is_coast = is_coast
+    segments.append((current_segment_start, len(dm), current_is_coast))
+
+    for seg_start, seg_end, is_coast in segments:
+        if is_coast:
+            continue
+        ax_alpha.plot(
+            t[seg_start : seg_end + 1],
+            alpha[seg_start : seg_end + 1],
+            color=color,
+            linewidth=1.8,
+            linestyle=base_linestyle,
+        )
+
+    ax_alpha.plot(
+        [],
+        [],
+        color=color,
+        linewidth=1.8,
+        linestyle=base_linestyle,
+        label=f"Траектория {traj_num}",
+    )
+
+    if transition_indices:
+        transition_t = t[transition_indices]
+        transition_alpha = alpha[transition_indices]
+        ax_alpha.plot(
+            transition_t,
+            transition_alpha,
+            "o",
+            color=color,
+            markersize=3.2,
+            markeredgecolor="white",
+            markeredgewidth=0.6,
+            zorder=5,
+        )
+
     # Draw desired orbit as dotted circle
     orbit_radius = R_M + h_target
     orbit_x = moon_center_x + orbit_radius * np.cos(theta)
@@ -192,4 +241,23 @@ ax.tick_params(labelsize=9)
 
 plt.tight_layout(pad=0.3)
 plt.savefig("out/charts/trajectories.png", dpi=600, bbox_inches="tight")
-plt.show()
+plt.close(fig)
+
+ax_alpha.set_xlabel("$t$, с", fontsize=11)
+ax_alpha.set_ylabel(r"$\alpha$, град", fontsize=11)
+ax_alpha.grid(True)
+ax_alpha.legend(
+    loc="best",
+    fontsize=9,
+    frameon=True,
+    fancybox=True,
+    shadow=False,
+    edgecolor="black",
+    framealpha=0.9,
+)
+ax_alpha.minorticks_on()
+ax_alpha.tick_params(labelsize=9)
+
+fig_alpha.tight_layout(pad=0.3)
+fig_alpha.savefig("out/charts/alpha.png", dpi=600, bbox_inches="tight")
+plt.close(fig_alpha)

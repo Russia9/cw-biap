@@ -79,10 +79,9 @@ ax[1, 3].set(xlabel="t, s", ylabel="m, t", title="Mass (АУТ)")
 marks(ax[1, 3])
 ax[1, 3].set_xlim(0, t_aut)
 
-# Third row: angles, Mach and altitude over the powered (active) segment only.
+# Third row: angles, alpha, Mach and altitude over the powered (active) segment only.
 ax[2, 0].plot(aut["t"], aut["vartheta"], label="ϑ (pitch program)")
 ax[2, 0].plot(aut["t"], aut["theta"], label="θ (flight angle)")
-ax[2, 0].plot(aut["t"], aut["alpha"], label="α")
 ax[2, 0].set(xlabel="t, s", ylabel="deg", title="Angles (АУТ)")
 ax[2, 0].legend()
 marks(ax[2, 0])
@@ -98,7 +97,15 @@ ax[2, 2].set(xlabel="t, s", ylabel="H, km", title="Altitude (АУТ)")
 marks(ax[2, 2])
 ax[2, 2].set_xlim(0, t_aut)
 
-ax[2, 3].axis("off")
+ax[2, 3].plot(aut["t"], aut["alpha"])
+ax[2, 3].axhline(-10, color="0.7", lw=0.8, ls="--", label="α = -10°")
+ax[2, 3].set(xlabel="t, s", ylabel="α, deg", title="Alpha (АУТ)")
+alpha_scale = aut.loc[aut["t"] > aut["t"].min(), "alpha"]
+alpha_limit = max(alpha_scale.abs().max(), 1.0) * 1.1
+ax[2, 3].set_ylim(-alpha_limit, alpha_limit)
+ax[2, 3].legend()
+marks(ax[2, 3])
+ax[2, 3].set_xlim(0, t_aut)
 
 # Fourth row: aerodynamic forces (drag X, lift Y) on the active and passive legs.
 ax[3, 0].plot(aut["t"], aut["X"] / 1000, label="X (drag)")

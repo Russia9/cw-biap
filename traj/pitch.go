@@ -19,7 +19,7 @@ const (
 
 // Default shape exponents when a config arc leaves k unset.
 const (
-	defaultKExp = 3.0 // exp: >0 front-loads the turn, 0 ⇒ linear
+	defaultKExp = 3.0 // exp: >0 front-loads the turn, 0 ⇒ smootherstep-only
 	defaultKCos = 1.1 // cos: power on normalized time (C++ reference value)
 	minKCos     = 1.0 // lower values make visually sharp, non-smooth starts
 )
@@ -99,20 +99,19 @@ func arcAt(sh Shape, a, b, t0, t1, k, t float64) float64 {
 	return arcExp(a, b, t0, t1, k, t)
 }
 
-// arcExp is the exponential segment from a (at t0) to b (at t1):
+// arcExp is the smoothed exponential segment from a (at t0) to b (at t1):
 //
-//	ϑ = b + (a−b) · (e^(−k·s) − e^(−k))/(1 − e^(−k)),  s = (t−t0)/(t1−t0)
+//	ϑ = a + (b−a) · (e^(−k·u) − 1)/(e^(−k) − 1),
+//	u = 6s^5 − 15s^4 + 10s^3,  s = (t−t0)/(t1−t0)
 //
-// k>0 front-loads the turn (steep at t0, flattening toward t1), keeping the pitch
-// rate — and so |α| — low in the later, supersonic part of each arc. k→0 reduces
-// to a straight line.
+// k>0 front-loads the turn, keeping the pitch rate — and so |α| — low in the
+// later, supersonic part of each arc. k<0 back-loads it. k→0 reduces to the
+// smootherstep curve. The smootherstep phase makes stacked exponential arcs
+// value-, rate-, and acceleration-continuous at joints.
 func arcExp(a, b, t0, t1, k, t float64) float64 {
 	s := (t - t0) / (t1 - t0)
-	if math.Abs(k) < 1e-9 {
-		return a + (b-a)*s // linear limit
-	}
-	w := (math.Exp(-k*s) - math.Exp(-k)) / (1 - math.Exp(-k))
-	return b + (a-b)*w
+	u := smootherstep(s)
+	return a + (b-a)*expEase(u, k)
 }
 
 // arcCos is the chained half-cosine segment from a (at t0) to b (at t1):
@@ -136,6 +135,28 @@ func smoothCosK(k float64) float64 {
 	return k
 }
 
+func smootherstep(s float64) float64 {
+	return s * s * s * (s*(s*6-15) + 10)
+}
+
+func smootherstepPrime(s float64) float64 {
+	return 30 * s * s * (s - 1) * (s - 1)
+}
+
+func expEase(u, k float64) float64 {
+	if math.Abs(k) < 1e-9 {
+		return u
+	}
+	return math.Expm1(-k*u) / math.Expm1(-k)
+}
+
+func expEasePrime(u, k float64) float64 {
+	if math.Abs(k) < 1e-9 {
+		return 1
+	}
+	return -k * math.Exp(-k*u) / math.Expm1(-k)
+}
+
 // arcRate is the analytical time derivative of the corresponding arc [rad/s].
 func arcRate(sh Shape, a, b, t0, t1, k, t float64) float64 {
 	tau := t1 - t0
@@ -147,8 +168,9 @@ func arcRate(sh Shape, a, b, t0, t1, k, t float64) float64 {
 		k = smoothCosK(k)
 		return -(a - b) / 2 * math.Sin(math.Pi*math.Pow(s, k)) * math.Pi * k * math.Pow(s, k-1) / tau
 	}
-	if math.Abs(k) < 1e-9 {
-		return (b - a) / tau // linear limit
+	if s <= 0 || s >= 1 {
+		return 0
 	}
-	return (a - b) * (-k * math.Exp(-k*s) / (1 - math.Exp(-k))) / tau
+	u := smootherstep(s)
+	return (b - a) * expEasePrime(u, k) * smootherstepPrime(s) / tau
 }

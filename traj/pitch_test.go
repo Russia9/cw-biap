@@ -55,6 +55,41 @@ func TestCosinePitchNormalizesLowExponentForSmoothStart(t *testing.T) {
 	assertClose(t, "rate at segment start", p.Rate(10), 0, 1e-12)
 }
 
+func TestExponentialPitchSegmentsChainSmoothly(t *testing.T) {
+	p := PitchProgram{
+		TVert: 10,
+		Segments: []PitchSegment{
+			{TEnd: 25, Theta: deg(80), Shape: ShapeExp, K: 3},
+			{TEnd: 66.4, Theta: deg(72), Shape: ShapeExp, K: -2},
+		},
+	}
+
+	assertClose(t, "vertical hold", p.Theta(10), math.Pi/2, 1e-12)
+	assertClose(t, "first endpoint", p.Theta(25), deg(80), 1e-12)
+	assertClose(t, "second start", p.Theta(math.Nextafter(25, math.Inf(1))), deg(80), 1e-12)
+	assertClose(t, "second endpoint", p.Theta(66.4), deg(72), 1e-12)
+
+	assertClose(t, "vertical rate", p.Rate(10), 0, 1e-12)
+	assertClose(t, "first endpoint rate", p.Rate(25), 0, 1e-12)
+	assertClose(t, "final endpoint rate", p.Rate(66.4), 0, 1e-12)
+}
+
+func TestExponentialPitchZeroKUsesSmootherstep(t *testing.T) {
+	p := PitchProgram{
+		TVert: 10,
+		Segments: []PitchSegment{
+			{TEnd: 20, Theta: deg(80), Shape: ShapeExp, K: 0},
+		},
+	}
+
+	a, b := math.Pi/2, deg(80)
+	s := (15.0 - 10.0) / (20.0 - 10.0)
+	u := s * s * s * (s*(s*6-15) + 10)
+	assertClose(t, "midpoint uses smootherstep limit", p.Theta(15), a+(b-a)*u, 1e-12)
+	assertClose(t, "rate at segment start", p.Rate(10), 0, 1e-12)
+	assertClose(t, "rate at segment end", p.Rate(20), 0, 1e-12)
+}
+
 func TestPitchProgramValidateRejectsNonIncreasingSegments(t *testing.T) {
 	p := PitchProgram{
 		TVert: 10,
