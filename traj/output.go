@@ -2,6 +2,7 @@ package traj
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -40,6 +41,31 @@ func WriteCSV(rows []Row, path string, decimate int) error {
 	return nil
 }
 
+// MetricsJSON returns a single-line JSON object with the terminal trajectory
+// parameters, the measured §4.4 maxima, and the configured limits. It is the
+// machine-readable interface consumed by the CMA-ES optimizer (optimize.py).
+func MetricsJSON(d Diagnostics, lim Limits) string {
+	m := map[string]float64{
+		"impact_range_km":    d.ImpactRange / 1000,
+		"impact_t_s":         d.ImpactT,
+		"apogee_h_km":        d.ApogeeH / 1000,
+		"apogee_t_s":         d.ApogeeT,
+		"burnout_v":          d.BurnoutV,
+		"burnout_h_km":       d.BurnoutH / 1000,
+		"burnout_theta_deg":  d.BurnoutTheta,
+		"max_alpha_sub_deg":  d.MaxAlphaSub,
+		"max_alpha_sup_deg":  d.MaxAlphaSup,
+		"max_pitch_rate_dps": d.MaxPitchRate,
+		"max_q_pa":           d.MaxQ,
+		"lim_eps1":           lim.Eps1,
+		"lim_eps2":           lim.Eps2,
+		"lim_theta_dot":      lim.ThetaDotMax,
+		"lim_qmax":           lim.Qmax,
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
 func okFlag(measured, limit float64) string {
 	if measured <= limit {
 		return "OK"
@@ -49,14 +75,14 @@ func okFlag(measured, limit float64) string {
 
 // PrintDiagnostics prints the constructive-ballistic checks (§4.4) and terminal
 // trajectory parameters with pass/fail against the configured limits.
-func PrintDiagnostics(d Diagnostics, at *AeroTable) {
+func PrintDiagnostics(d Diagnostics, lim Limits, at *AeroTable) {
 	fmt.Println("=== Constraint diagnostics (§4.4) ===")
-	fmt.Printf("  max |α|, M≤1.1            : %6.2f deg   (limit %.2f)  %s\n", d.MaxAlphaSub, Eps1, okFlag(d.MaxAlphaSub, Eps1))
-	fmt.Printf("  max |α|, M>1.1 & H≤94km   : %6.2f deg   (limit %.2f)  %s\n", d.MaxAlphaSup, Eps2, okFlag(d.MaxAlphaSup, Eps2))
-	fmt.Printf("  max |ϑ̇| (active)          : %6.2f deg/s (limit %.2f)  %s\n", d.MaxPitchRate, ThetaDotMax, okFlag(d.MaxPitchRate, ThetaDotMax))
+	fmt.Printf("  max |α|, M≤1.1            : %6.2f deg   (limit %.2f)  %s\n", d.MaxAlphaSub, lim.Eps1, okFlag(d.MaxAlphaSub, lim.Eps1))
+	fmt.Printf("  max |α|, M>1.1 & H≤94km   : %6.2f deg   (limit %.2f)  %s\n", d.MaxAlphaSup, lim.Eps2, okFlag(d.MaxAlphaSup, lim.Eps2))
+	fmt.Printf("  max |ϑ̇| (active)          : %6.2f deg/s (limit %.2f)  %s\n", d.MaxPitchRate, lim.ThetaDotMax, okFlag(d.MaxPitchRate, lim.ThetaDotMax))
 	fmt.Printf("  |ϑ̇| at stage-1 sep        : %6.3f deg/s (≈0 for smooth separation)\n", d.PitchRateSep1)
 	fmt.Printf("  |ϑ̇| at stage-2 sep        : %6.3f deg/s (≈0 for smooth separation)\n", d.PitchRateSep2)
-	fmt.Printf("  max q                     : %8.1f Pa  (limit %.0f)  %s\n", d.MaxQ, Qmax, okFlag(d.MaxQ, Qmax))
+	fmt.Printf("  max q                     : %8.1f Pa  (limit %.0f)  %s\n", d.MaxQ, lim.Qmax, okFlag(d.MaxQ, lim.Qmax))
 	fmt.Printf("  (max q at t = %.1f s)\n", d.MaxQt)
 
 	fmt.Println("=== Atmosphere boundary (94 km) ===")

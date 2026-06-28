@@ -47,46 +47,66 @@ type Diagnostics struct {
 	ImpactT, ImpactRange   float64
 }
 
-// Simulate integrates the full flight: three powered stages (5-state, programmed
-// pitch) followed by the passive payload (7-state, free pitch under the
-// aerodynamic moment), then derives the constraint diagnostics. The pitch-program
-// free parameters live in r.Pitch so an optimizer can vary them via r.
+// passiveMaxDuration caps the coast/re-entry leg [s] in case the payload never
+// returns to the ground (numerical safety).
+const passiveMaxDuration = 6000.0
+
+// Simulate integrates the full flight: the powered stages (5-state, programmed
+// pitch) followed by the passive payload (5-state, velocity-aligned drag-only),
+// then derives the constraint diagnostics. The pitch-program free parameters live
+// in r.Pitch so an optimizer can vary them via r.
 func Simulate(r Rocket, at *AeroTable, h float64) ([]Row, Diagnostics, error) {
 	var rows []Row
-
 	state := []float64{0, 0, 0, 0, r.Stages[0].M0}
 	t0 := 0.0
-	tk := []float64{r.Pitch.Tk1, r.Pitch.Tk2, r.Pitch.Tk3}
+	tk := r.BurnoutTimes()
 
 	for i, st := range r.Stages {
-		tEnd := tk[i]
-		sys := r.activeSystem(st, at)
-		res, err := na.RungeKuttaMethod(sys, t0, state, []float64{tEnd}, h, stopAtTime(tEnd))
+		stageRows, end, err := r.simulateStage(at, st, i, t0, tk[i], state, h)
 		if err != nil {
 			return nil, Diagnostics{}, err
 		}
-		rows = appendRows(rows, r, at, res, st.Part, i+1, true, i > 0)
-		state = finalState(res, 5)
+		rows = append(rows, stageRows...)
+		state = end
 		if i < len(r.Stages)-1 {
 			state[iM] = r.Stages[i+1].M0 // drop spent stage, expose next sub-rocket
 		} else {
-			state[iM] = r.Payload // drop stage 3, payload remains
+			state[iM] = r.Payload // drop last stage, payload remains
 		}
-		t0 = tEnd
+		t0 = tk[i]
 	}
 
-	// Active -> passive: same 5 states. The payload flies velocity-aligned
-	// (drag-only), so no pitch state is carried.
-	ps := []float64{state[iVx], state[iVy], state[iX], state[iY], state[iM]}
-	tMax := t0 + 6000
-	psys := r.passiveSystem(at)
-	res, err := na.RungeKuttaMethod(psys, t0, ps, []float64{}, h, stopGround(tMax))
+	passiveRows, err := r.simulatePassive(at, t0, state, h)
 	if err != nil {
 		return nil, Diagnostics{}, err
 	}
-	rows = appendRows(rows, r, at, res, PayloadPart, 4, false, true)
+	rows = append(rows, passiveRows...)
 
-	return rows, diagnose(r, rows), nil
+	return rows, diagnose(r, rows, tk), nil
+}
+
+// simulateStage integrates one powered stage from t0 to tEnd and returns its
+// trajectory rows and the final state vector (5 states).
+func (r Rocket) simulateStage(at *AeroTable, st Stage, i int, t0, tEnd float64, state []float64, h float64) ([]Row, []float64, error) {
+	sys := r.activeSystem(st, at)
+	res, err := na.RungeKuttaMethod(sys, t0, state, []float64{tEnd}, h, stopAtTime(tEnd))
+	if err != nil {
+		return nil, nil, err
+	}
+	rows := appendRows(nil, r, at, res, st.AeroPart, i+1, true, i > 0)
+	return rows, finalState(res, 5), nil
+}
+
+// simulatePassive integrates the payload coast/re-entry from t0 to ground impact.
+func (r Rocket) simulatePassive(at *AeroTable, t0 float64, state []float64, h float64) ([]Row, error) {
+	// Active -> passive: same 5 states. The payload flies velocity-aligned
+	// (drag-only), so no pitch state is carried.
+	ps := []float64{state[iVx], state[iVy], state[iX], state[iY], state[iM]}
+	res, err := na.RungeKuttaMethod(r.passiveSystem(at), t0, ps, []float64{}, h, stopGround(t0+passiveMaxDuration))
+	if err != nil {
+		return nil, err
+	}
+	return appendRows(nil, r, at, res, r.PayloadPart, 4, false, true), nil
 }
 
 func stopAtTime(tEnd float64) func(x float64, y ...float64) (bool, bool) {
@@ -168,16 +188,17 @@ func surfaceRange(x, y float64) float64 {
 	return Rz * math.Atan2(x, Rz+y)
 }
 
-func diagnose(r Rocket, rows []Row) Diagnostics {
+func diagnose(r Rocket, rows []Row, tk []float64) Diagnostics {
 	const r2d = 180 / math.Pi
 	d := Diagnostics{}
-	d.PitchRateSep1 = math.Abs(r.Pitch.Rate(r.Pitch.Tk1)) * r2d
-	d.PitchRateSep2 = math.Abs(r.Pitch.Rate(r.Pitch.Tk2)) * r2d
+	d.PitchRateSep1 = math.Abs(r.Pitch.Rate(tk[0])) * r2d
+	d.PitchRateSep2 = math.Abs(r.Pitch.Rate(tk[1])) * r2d
 
+	lastActive := len(r.Stages) // stage index of the final powered stage
 	crossedUp := false
 	prevH := 0.0
 	for i, row := range rows {
-		if row.Stage <= 3 { // active leg — the §4.4 checks apply here
+		if row.Stage <= lastActive { // active leg — the §4.4 checks apply here
 			if row.Q > d.MaxQ {
 				d.MaxQ, d.MaxQt = row.Q, row.T
 			}
@@ -206,9 +227,9 @@ func diagnose(r Rocket, rows []Row) Diagnostics {
 		prevH = row.H
 	}
 
-	// Burnout = last active row (stage 3, at Tk3).
+	// Burnout = last active row (final stage, at its burnout time).
 	for i := len(rows) - 1; i >= 0; i-- {
-		if rows[i].Stage == 3 {
+		if rows[i].Stage == lastActive {
 			d.BurnoutT = rows[i].T
 			d.BurnoutV = rows[i].V
 			d.BurnoutH = rows[i].H

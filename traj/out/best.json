@@ -1,0 +1,67 @@
+{
+  "payload_mass": 620.0,
+  "payload_part": "head",
+  "t_vertical": 5.063642010687257,
+  "stages": [
+    {
+      "m0": 30568,
+      "m_fuel": 20101,
+      "burn_time": 66.4,
+      "isp_sl": 233.95,
+      "isp_vac": 252.75,
+      "dm": 1.58,
+      "part": "all",
+      "pitch": [
+        {
+          "t_end": 20.869823829971647,
+          "theta_deg": 82.58648474161068,
+          "shape": "cos",
+          "k": 0.4275518626902267
+        },
+        {
+          "theta_deg": 31.483519139020554,
+          "shape": "cos",
+          "k": 0.6462809735225648
+        }
+      ]
+    },
+    {
+      "m0": 8702,
+      "m_fuel": 5722,
+      "burn_time": 43.0,
+      "isp_sl": 244.02,
+      "isp_vac": 265.75,
+      "dm": 1.17,
+      "part": "stage2up",
+      "pitch": [
+        {
+          "theta_deg": 23.802149953033027,
+          "shape": "cos",
+          "k": 7.420220412785173
+        }
+      ]
+    },
+    {
+      "m0": 2476,
+      "m_fuel": 1628,
+      "burn_time": 30.8,
+      "isp_sl": 257.18,
+      "isp_vac": 275.22,
+      "dm": 0.84,
+      "part": "stage3up",
+      "pitch": [
+        {
+          "theta_deg": 16.713158182089025,
+          "shape": "cos",
+          "k": 2.6561769387289624
+        }
+      ]
+    }
+  ],
+  "limits": {
+    "eps1": 2.0,
+    "eps2": 8.0,
+    "theta_dot_max": 3.0,
+    "qmax": 120000
+  }
+}

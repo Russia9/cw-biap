@@ -18,35 +18,24 @@ const (
 // = MFuel. At separation the spent dry structure is dropped and the mass becomes
 // the next stage's M0 (or the payload mass after the last stage).
 //
-// Thrust altitude correction (§4.2): P(p) = Pud(p)*MassFlow()*G0, with
-// Pud(p) linear between sea level (PudSL = design impulse P_уд.р) and vacuum
-// (PudVac = P_уд.п). These two anchors reproduce main.py's launch and vacuum
-// thrusts exactly (e.g. stage 1: 694.8 kN and 750.6 kN).
+// Thrust altitude correction (§4.2): P(p) = Isp(p)*MassFlow()*G0, with Isp(p)
+// linear between sea level (IspSL = design impulse P_уд.р) and vacuum (IspVac =
+// P_уд.п). These two anchors reproduce main.py's launch and vacuum thrusts
+// exactly (e.g. stage 1: 694.8 kN and 750.6 kN).
 type Stage struct {
 	M0       float64 // sub-rocket launch mass [kg]
 	MFuel    float64 // propellant mass ω_з [kg]
 	BurnTime float64 // Δt_к [s]
-	PudSL    float64 // specific impulse at sea level (P_уд.р) [s]
-	PudVac   float64 // specific impulse in vacuum (P_уд.п) [s]
-	Dm       float64 // motor diameter [m]
-	Part     string  // aerodynamic part key in averages.csv
+	IspSL    float64 // specific impulse at sea level (P_уд.р) [s]
+	IspVac   float64 // specific impulse in vacuum (P_уд.п) [s]
+	MotorDia float64 // motor diameter [m]
+	AeroPart string  // aerodynamic part key in averages.csv
 }
 
 // MassFlow returns the constant second-mass-flow β = MFuel/BurnTime [kg/s].
 func (s Stage) MassFlow() float64 { return s.MFuel / s.BurnTime }
 
-// Stages is the three-stage configuration (source: main.py).
-var Stages = []Stage{
-	{M0: 30568, MFuel: 20101, BurnTime: 66.4, PudSL: 233.95, PudVac: 252.75, Dm: 1.58, Part: "all"},
-	{M0: 8702, MFuel: 5722, BurnTime: 43.0, PudSL: 244.02, PudVac: 265.75, Dm: 1.17, Part: "stage2up"},
-	{M0: 2476, MFuel: 1628, BurnTime: 30.8, PudSL: 257.18, PudVac: 275.22, Dm: 0.84, Part: "stage3up"},
-}
-
 const (
-	// Payload = warhead + control unit (M_BCH + M_AU from main.py).
-	PayloadMass = 620.0
-	PayloadPart = "head"
-
 	// Reference geometry shared by all aerodynamic coefficients in
 	// averages.csv (openfoam gen_case.py: Aref = π·R_all², lRef = L_all from
 	// the full-rocket STL bounding box; CofR at the nose).
@@ -57,53 +46,37 @@ const (
 // Aref is the reference area for aerodynamic forces/moments [m²].
 var Aref = math.Pi * RrefAll * RrefAll
 
-// PitchParams defines the 4-phase pitch program (§4.3). The free parameters
-// tuned to satisfy the constructive-ballistic constraints are Tv and the three
-// terminal pitch angles; the phase-end times Tk1/Tk2/Tk3 are the cumulative
-// stage burn times.
-type PitchParams struct {
-	Tv               float64 // vertical-hold duration t_в [s]
-	Tk1, Tk2, Tk3    float64 // stage burnout times [s]
-	ThK1, ThK2, ThK3 float64 // terminal pitch angles ϑ_k1..k3 [rad]
+// DragScale multiplies the CFD drag coefficient. Set to 0.9 to use 90 % of the
+// tabulated Cd (sensitivity study against the openfoam coefficients).
+const DragScale = 1
+
+// Limits are the constructive-ballistic reporting thresholds (§4.4). The
+// simulator measures the achieved maxima and flags whether each limit is met.
+type Limits struct {
+	Eps1        float64 `json:"eps1"`          // |α| limit for M ≤ 1.1 [deg]
+	Eps2        float64 `json:"eps2"`          // |α| limit for M > 1.1 and H ≤ Hatm [deg]
+	ThetaDotMax float64 `json:"theta_dot_max"` // |ϑ̇| limit [deg/s]
+	Qmax        float64 `json:"qmax"`          // dynamic-pressure limit [Pa]
 }
 
-// Rocket bundles the full configuration handed to the simulator.
+// Rocket bundles the full configuration handed to the simulator: the stage
+// design figures, the payload, and the flattened per-stage pitch program.
 type Rocket struct {
-	Stages  []Stage
-	Payload float64
-	Pitch   PitchParams
+	Stages      []Stage
+	Payload     float64
+	PayloadPart string
+	Pitch       PitchProgram
+}
+
+// BurnoutTimes returns the cumulative stage burnout (= staging) times [s].
+func (r Rocket) BurnoutTimes() []float64 {
+	tk := make([]float64, len(r.Stages))
+	t := 0.0
+	for i, st := range r.Stages {
+		t += st.BurnTime
+		tk[i] = t
+	}
+	return tk
 }
 
 func deg(d float64) float64 { return d * math.Pi / 180 }
-
-// DefaultRocket wires the design figures with an initial (tunable) pitch
-// program. The terminal angles and Tv are first guesses — adjust them using the
-// constraint diagnostics printed by the simulator.
-func DefaultRocket() Rocket {
-	tk1 := Stages[0].BurnTime
-	tk2 := tk1 + Stages[1].BurnTime
-	tk3 := tk2 + Stages[2].BurnTime
-	return Rocket{
-		Stages:  Stages,
-		Payload: PayloadMass,
-		Pitch: PitchParams{
-			Tv:   10,
-			Tk1:  tk1,
-			Tk2:  tk2,
-			Tk3:  tk3,
-			ThK1: deg(72),
-			ThK2: deg(46),
-			ThK3: deg(28),
-		},
-	}
-}
-
-// Constraint limits (§4.4). These are reporting thresholds — the simulator
-// measures the achieved maxima and flags whether each limit is met. Set them to
-// the values used in the report.
-const (
-	Eps1        = 2.0   // |α| limit for M ≤ 1.1 [deg]
-	Eps2        = 8.0   // |α| limit for M > 1.1 and H ≤ Hatm [deg]
-	ThetaDotMax = 3.0   // |ϑ̇| limit [deg/s]
-	Qmax        = 120e3 // dynamic-pressure limit [Pa]
-)
