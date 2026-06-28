@@ -1,0 +1,890 @@
+#define _USE_MATH_DEFINES
+#include <iostream>
+#include <cstdlib>
+#include <vector>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <limits>
+#include <random>
+#include <string>
+#include <stdexcept>
+using namespace std;
+
+struct AtmosphereData
+{
+    double H;
+    double g;
+    double T;
+    double a;
+    double p;
+    double rho;
+};
+
+struct AerodynamicData
+{
+    double X;
+    double Y;
+    double Mz;
+    double Cx;
+    double Cy;
+    double mz;
+};
+
+struct PitchProgram;
+struct SimulationResult;
+
+AtmosphereData atmosphere(double h);
+double Pe(double pressure_pa, double t);
+double pitchh(const PitchProgram& program, double t, double vx, double vy);
+AerodynamicData Aerodynamic(double M, double alpha, double t, double q);
+double IZ(double t);
+double massAt(double t);
+double tetta(double vx, double vy);
+double eta(double x, double y);
+SimulationResult simulate(const PitchProgram& program, double dt, bool write_csv = false, const std::string& csv_path = "trajectory_optimized.csv");
+
+struct dinamic
+{
+    double v_x, v_y, v;
+    double x, y;
+    double m;
+    double r, h;
+    double wz;
+    double tetta, pitch, alpha, eta;
+    double Iz, g;
+    double P, X, Y, Mz;
+    double t;
+    double L, q, M;
+};
+
+struct PitchProgram
+{
+    double tv;              // vertical-flight duration, s; must be > 8
+    double topt;            // end of the first pitch maneuver, s
+    double k1;              // terminal feedback factor
+    double tettaopt;        // intermediate pitch angle, rad
+};
+
+struct SimulationResult
+{
+    bool valid = false;
+    double range_m = 0.0;
+    double max_height_m = 0.0;
+    double max_abs_alpha_deg = std::numeric_limits<double>::infinity();
+    double impact_time_s = 0.0;
+    double impact_speed_mps = 0.0;
+};
+
+const double R = 6371000;
+
+// ==================== ПАРАМЕТРЫ РАКЕТЫ (ДВЕ СТУПЕНИ) ====================
+// Замените на свои реальные значения!
+const double t1 = 48.4591;      // время работы 1-й ступени, с
+const double t2 = 38.5733;      // время работы 2-й ступени, с
+const double mpn = 575;     // масса полезной нагрузки, кг
+
+const double m1 = 10807;     // масса топлива 1-й ступени, кг
+const double m2 = 2359;     // масса топлива 2-й ступени, кг
+const double m01 = 752;     // отделяемая масса 1-й ступени (конструкция), кг
+const double m02 = 174;     // отделяемая масса 2-й ступени, кг
+
+const double d1 = 1.39;      // диаметр 1-й ступени, м
+const double d2 = 0.986;      // диаметр 2-й ступени, м
+const double d_head = 0.986;  // диаметр головной части, м
+const double S1 = M_PI * d1 * d1 / 4;
+const double S2 = M_PI * d2 * d2 / 4;
+const double S_head = M_PI * d_head * d_head / 4;
+
+// Моменты инерции (примерные – замените на свои)
+const double Iz1 = 24027;   // до отделения 1-й ступени
+const double Iz2 = 124027;    // после отделения 1-й ступени (перед отделением 2-й)
+const double Iz3 = 1010;    // после отделения 2-й ступени (головная часть)
+const double Iz4 = 258;     // вспомогательный (если нужен)
+const double Iz5 = 173;     // конечный
+
+// Pitch-program and optimization limits
+const double tayt = t1 + t2;   // total powered-flight duration
+const double MIN_RANGE_KM = 2800.0;
+const double ALPHA_LIMIT_DEG = 10.0;
+const double MIN_TV = 8.001;   // strict requirement: tv > 8 s
+const double MAX_TV = 25.0;
+const double MIN_TOPT_GAP = 1.0;
+const double MIN_K1 = 0.70;
+const double MAX_K1 = 1.10;
+const double MIN_TETTAOPT_DEG = 15.0;
+const double MAX_TETTAOPT_DEG = 70.0;
+
+constexpr double degToRad(double deg) { return deg * M_PI / 180.0; }
+constexpr double radToDeg(double rad) { return rad * 180.0 / M_PI; }
+
+double wrapAngle(double angle)
+{
+    while (angle > M_PI) angle -= 2.0 * M_PI;
+    while (angle < -M_PI) angle += 2.0 * M_PI;
+    return angle;
+}
+
+int lowerInterval(const double* values, int count, double value)
+{
+    if (count < 2) throw std::invalid_argument("Interpolation table must contain at least two values");
+    if (value <= values[0]) return 0;
+    if (value >= values[count - 1]) return count - 2;
+    return static_cast<int>(std::upper_bound(values, values + count, value) - values) - 1;
+}
+
+// --------------------------------------------------------------
+// Атмосфера (без изменений)
+// --------------------------------------------------------------
+AtmosphereData atmosphere(double h)
+{
+    if (h > 1500000.0) h = 1500000.0;
+    if (h < -1999.0) h = -1999.0;
+
+    double H, T, p, ro, a, g;
+    H = round((6356767 * h) / (6356767 + h));
+    g = 9.80665 * pow(6356767 / (6356767 + h), 2);
+
+    if (h < 0 && h >= -1999) T = 301.15 - 0.0065 * (H + 2000);
+    else if (h < 11019 && h >= 0) T = 288.15 - 0.0065 * H;
+    else if (h < 20063 && h >= 11019) T = 216.65;
+    else if (h < 32162 && h >= 20063) T = 216.65 + 0.0010 * (H - 20000);
+    else if (h < 47350 && h >= 32162) T = 228.65 + 0.0028 * (H - 32000);
+    else if (h < 51412 && h >= 47350) T = 270.65;
+    else if (h < 71802 && h >= 51412) T = 270.65 - 0.0028 * (H - 51000);
+    else if (h < 86152 && h >= 71802) T = 214.65 - 0.0020 * (H - 71000);
+    else if (h < 95411 && h >= 86152) T = 186.65;
+    else if (h < 104128 && h >= 95411) T = 186.65 + 0.0030 * (H - 94000);
+    else if (h < 120000 && h >= 104128) T = 212.00 + 0.0110 * (H - 102450);
+    else if (h >= 120000 && h <= 1500000) {
+        if (h < 200000) T = 600 + (h - 120000) * (1000 - 600) / 80000;
+        else if (h < 500000) T = 1000;
+        else if (h < 1000000) T = 1000 + (h - 500000) * (1200 - 1000) / 500000;
+        else T = 1200;
+    }
+    else T = 1200.0;
+
+    a = 20.046796 * sqrt(T);
+
+    if (h < 0 && h >= -1999)
+        p = pow(10, (log10(127774) - (9.80665 * log10((301.15 - 0.0065 * (H + 2000)) / 301.15) / (-0.0065 * 287.05287))));
+    else if (h < 11019 && h >= 0)
+        p = pow(10, (log10(101325) - (9.80665 * log10((288.15 - 0.0065 * H) / 288.15) / (-0.0065 * 287.05287))));
+    else if (h < 20063 && h >= 11019)
+        p = pow(10, (log10(22632) - (9.80665 * 0.434294 * (H - 11000) / (287.05287 * 216.65))));
+    else if (h < 32162 && h >= 20063)
+        p = pow(10, (log10(5474.87) - (9.80665 * log10((216.65 + 0.0010 * (H - 20000)) / 216.65) / (0.0010 * 287.05287))));
+    else if (h < 47350 && h >= 32162)
+        p = pow(10, (log10(868.014) - (9.80665 * log10((228.65 + 0.0028 * (H - 32000)) / 228.65) / (0.0028 * 287.05287))));
+    else if (h < 51412 && h >= 47350)
+        p = pow(10, (log10(110.906) - (9.80665 * 0.434294 * (H - 47000) / (287.05287 * 270.65))));
+    else if (h < 71802 && h >= 51412)
+        p = pow(10, (log10(66.9384) - (9.80665 * log10((270.65 - 0.0028 * (H - 51000)) / 270.65) / (-0.0028 * 287.05287))));
+    else if (h < 86152 && h >= 71802)
+        p = pow(10, (log10(3.95639) - (9.80665 * log10((214.65 - 0.0020 * (H - 71000)) / 214.65) / (-0.0020 * 287.05287))));
+    else if (h < 95411 && h >= 86152)
+        p = pow(10, (log10(0.363409) - (9.80665 * 0.434294 * (H - 85000) / (287.05287 * 186.65))));
+    else if (h < 104128 && h >= 95411)
+        p = pow(10, (log10(0.112377) - (9.80665 * log10((186.65 + 0.0030 * (H - 94000)) / 186.65) / (0.0030 * 287.05287))));
+    else if (h < 120000 && h >= 104128)
+        p = pow(10, (log10(0.0238282) - (9.80665 * log10((212.00 + 0.0110 * (H - 102450)) / 212.00) / (0.0110 * 287.05287))));
+    else
+    {
+        double p_120 = 0.0238282;
+        double H_scale = (h < 200000) ? 30000.0 : ((h < 500000) ? 45000.0 : 60000.0);
+        p = p_120 * exp(-(h - 120000) / H_scale);
+    }
+    ro = p / (287.05287 * T);
+    return {H, g, T, a, p, ro};
+}
+
+// --------------------------------------------------------------
+// Аэродинамика (полностью ваши данные)
+// --------------------------------------------------------------
+AerodynamicData Aerodynamic(double M, double alpha, double t, double q)
+{
+    int conf = 0;
+    if (t >= t1 + t2) conf = 2;         // payload / head section
+    else if (t >= t1) conf = 1;         // second stage
+    else conf = 0;                      // first stage
+
+    double alpha_deg = alpha * 180.0 / M_PI;
+    double alpha_abs = fabs(alpha_deg);
+
+    double Cx = 0.0, Cy = 0.0, mz = 0.0;
+    double S, d_ref;
+
+    // ----------------------------------------------------------
+    // 1-я ступень
+    // ----------------------------------------------------------
+    if (conf == 0)
+    {
+        S = S1; d_ref = d1;
+
+        static const double M_vals[11] = { 0.4, 0.7, 0.8, 0.9, 1.2, 1.4, 1.6, 2.0, 3.0, 4.0, 8.0 };
+        static const double a_vals[5] = { 0, 3, 5, 7, 10 };
+
+        static const double Cx_tab[5][11] = {
+            {0.2138555, 0.24399091, 0.303490842, 0.375807735, 0.487680231, 0.482916113, 0.468186962, 0.433690853, 0.344686467, 0.304375399, 0.213644817},
+            {0.202256411,0.24650497, 0.3147496,   0.380112292, 0.488493245, 0.486911119, 0.472555969, 0.439205487, 0.351445339, 0.312198293, 0.227116528},
+            {0.183748401,0.25635997, 0.315301665, 0.393855373, 0.490627619, 0.489809108, 0.47730773,  0.443740107, 0.36067905,  0.324945705, 0.231234062},
+            {0.158686096,0.2675387,  0.324140765, 0.421979603, 0.491384252, 0.497278305, 0.485509709, 0.446580569, 0.376521089, 0.330132141, 0.23542179},
+            {0.135890173,0.28424157, 0.341515561, 0.431581802, 0.498402035, 0.505598905, 0.488557029, 0.454078888, 0.391951982, 0.338093829, 0.243596303}
+        };
+
+        static const double Cy_tab[5][11] = {
+            {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+            {0.067529645, 0.09378393, 0.117191339, 0.11091527, 0.105485603, 0.108632778, 0.109390014, 0.110934465, 0.111956695, 0.11215483, 0.112171635},
+            {0.126347967, 0.17546972, 0.219264995, 0.207522469, 0.197363564, 0.203251928, 0.204668716, 0.22308921,  0.225380024, 0.232512663, 0.237142053},
+            {0.178729307, 0.24821596, 0.310167877, 0.293557135, 0.27918655,  0.287516112, 0.289520273, 0.315577534, 0.318818074, 0.328907763, 0.335456406},
+            {0.30938043,  0.42966183, 0.536900595, 0.519394929, 0.502358184, 0.511294959, 0.531757114, 0.546264712, 0.551874086, 0.569339338, 0.580675038}
+        };
+
+        static const double mz_tab[5][11] = {
+            {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+            {0.250709603, 0.35100009, 0.413619122, 0.665843311, 0.178340858, 0.165216273, 0.146950066, 0.11911643, 0.087285324, 0.062340148, 0.039504553},
+            {0.41572352,  0.52726478, 0.588225344, 0.81522325,  0.29425102,  0.274139238, 0.244850318, 0.198926629, 0.136946443, 0.106168203, 0.068016835},
+            {0.547254657, 0.71095705, 0.764237251, 0.931188213, 0.404661407, 0.37618588,  0.339106066, 0.275370126, 0.187666104, 0.150462164, 0.098716865},
+            {0.753533305, 1.01296496, 0.946370264, 1.034122606, 0.569885031, 0.528418635, 0.480217737, 0.393461957, 0.265221993, 0.159836109, 0.155490894}
+        };
+
+        double alpha_abs_clamped = alpha_abs;
+        if (alpha_abs_clamped > 10.0) alpha_abs_clamped = 10.0;
+
+        double Mclamp = M;
+        if (Mclamp < M_vals[0]) Mclamp = M_vals[0];
+        if (Mclamp > M_vals[10]) Mclamp = M_vals[10];
+
+        int idxM = lowerInterval(M_vals, 11, Mclamp);
+        int idxMnext = idxM + 1;
+        double tM = (Mclamp - M_vals[idxM]) / (M_vals[idxMnext] - M_vals[idxM]);
+
+        int idxA = lowerInterval(a_vals, 5, alpha_abs_clamped);
+        int idxAnext = idxA + 1;
+        double tA = (alpha_abs_clamped - a_vals[idxA]) / (a_vals[idxAnext] - a_vals[idxA]);
+
+        auto interp = [&](const double tab[5][11]) {
+            double v00 = tab[idxA][idxM];
+            double v10 = tab[idxAnext][idxM];
+            double v01 = tab[idxA][idxMnext];
+            double v11 = tab[idxAnext][idxMnext];
+            return (1 - tA) * (1 - tM) * v00 + tA * (1 - tM) * v10 + (1 - tA) * tM * v01 + tA * tM * v11;
+            };
+
+        Cx = interp(Cx_tab);
+        Cy = interp(Cy_tab);
+        mz = interp(mz_tab);
+    }
+    // ----------------------------------------------------------
+    // 2-я ступень
+    // ----------------------------------------------------------
+    else if (conf == 1)
+    {
+        S = S2; d_ref = d2;
+
+        static const double M_vals[4] = { 2.0, 4.0, 8.0, 12.0 };
+        static const double a_vals[5] = { 0, 5, 10, 15, 20 };
+
+        static const double Cx_tab[5][4] = {
+            {0.392150461, 0.279961371, 0.225813158, 0.212599438},
+            {0.409541221, 0.282105638, 0.231111128, 0.217587391},
+            {0.422155812, 0.294690132, 0.249597846, 0.239996223},
+            {0.437787936, 0.299011783, 0.260055315, 0.252821217},
+            {0.442589993, 0.302918167, 0.27617085,  0.273842337}
+        };
+
+        static const double Cy_tab[5][4] = {
+            {0.0, 0.0, 0.0, 0.0},
+            {0.259882284, 0.167153125, 0.139880581, 0.133517288},
+            {0.446175611, 0.325665715, 0.271655146, 0.262858285},
+            {0.641525771, 0.491535493, 0.413235264, 0.394366629},
+            {0.781499141, 0.67584304,  0.581743401, 0.559184172}
+        };
+
+        static const double mz_tab[5][4] = {
+            {0.0, 0.0, 0.0, 0.0},
+            {0.106545422, 0.070971876, 0.05927725, 0.055423198},
+            {0.207486662, 0.141311457, 0.115408006, 0.109190883},
+            {0.30863492,  0.203280284, 0.16021769,  0.150755323},
+            {0.422336308, 0.297657746, 0.241912385, 0.229560277}
+        };
+
+        double alpha_abs_clamped = alpha_abs;
+        if (alpha_abs_clamped > 20.0) alpha_abs_clamped = 20.0;
+
+        double Mclamp = M;
+        if (Mclamp < M_vals[0]) Mclamp = M_vals[0];
+        if (Mclamp > M_vals[3]) Mclamp = M_vals[3];
+
+        int idxM = lowerInterval(M_vals, 4, Mclamp);
+        int idxMnext = idxM + 1;
+        double tM = (Mclamp - M_vals[idxM]) / (M_vals[idxMnext] - M_vals[idxM]);
+
+        int idxA = lowerInterval(a_vals, 5, alpha_abs_clamped);
+        int idxAnext = idxA + 1;
+        double tA = (alpha_abs_clamped - a_vals[idxA]) / (a_vals[idxAnext] - a_vals[idxA]);
+
+        auto interp = [&](const double tab[5][4]) {
+            double v00 = tab[idxA][idxM];
+            double v10 = tab[idxAnext][idxM];
+            double v01 = tab[idxA][idxMnext];
+            double v11 = tab[idxAnext][idxMnext];
+            return (1 - tA) * (1 - tM) * v00 + tA * (1 - tM) * v10 + (1 - tA) * tM * v01 + tA * tM * v11;
+            };
+
+        Cx = interp(Cx_tab);
+        Cy = interp(Cy_tab);
+        mz = interp(mz_tab);
+    }
+    // ----------------------------------------------------------
+    // Головная часть
+    // ----------------------------------------------------------
+    else // conf == 2
+    {
+        S = S_head; d_ref = d_head;
+
+        static const double M_vals[12] = { 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 2.0, 3.0, 4.0, 8.0, 12.0 };
+        static const double Cx_vals[12] = {
+            0.253990284, 0.31104171, 0.34683456, 0.4512376, 0.470613182,
+            0.471973654, 0.437570055, 0.336334079, 0.324309541, 0.292616411,
+            0.277176731, 0.277529628
+        };
+
+        double Mclamp = M;
+        if (Mclamp < M_vals[0]) Mclamp = M_vals[0];
+        if (Mclamp > M_vals[11]) Mclamp = M_vals[11];
+
+        int idx = lowerInterval(M_vals, 12, Mclamp);
+        double fraction = (Mclamp - M_vals[idx]) / (M_vals[idx + 1] - M_vals[idx]);
+        Cx = Cx_vals[idx] + fraction * (Cx_vals[idx + 1] - Cx_vals[idx]);
+
+        Cy = 0.0;
+        mz = 0.0;
+    }
+
+    // Знак угла атаки
+    if (alpha_deg < 0.0)
+    {
+        Cy = -Cy;
+        mz = -mz;
+    }
+
+    double X = Cx * S * q;
+    double Y = Cy * S * q;
+    double Mz = mz * S * q * d_ref;
+
+    return { X, Y, Mz, Cx, Cy, mz };
+}
+
+// --------------------------------------------------------------
+// Тяга (две ступени)
+// --------------------------------------------------------------
+double Pe(double pressure_pa, double t)
+{
+    double rash1 = m1 / t1, rash2 = m2 / t2;
+    // Замените значения тяги в пустоте на свои
+    double P_1 = 276.277 - (276.277 - 247.9424) * ((pressure_pa / 100000.0) / 1.01);
+    double P_2 = 278.052;
+    if (t <= t1) return P_1 * rash1 * 9.80665;
+    if (t <= t1 + t2) return P_2 * rash2 * 9.80665;
+    return 0.0;
+}
+
+// --------------------------------------------------------------
+// Программа тангажа
+// --------------------------------------------------------------
+double pitchh(const PitchProgram& program, double t, double vx, double vy)
+{
+    if (t <= program.tv) return M_PI / 2.0;
+
+    if (t <= program.topt) {
+        const double fraction = (t - program.tv) / (program.topt - program.tv);
+        const double smooth = (1.0 - cos(fraction * M_PI)) / 2.0;
+        return M_PI / 2.0 + (program.tettaopt - M_PI / 2.0) * smooth;
+    }
+
+    if (t <= tayt) {
+        const double fraction = (t - program.topt) / (tayt - program.topt);
+        const double smooth = (1.0 - cos(fraction * M_PI)) / 2.0;
+        const double target_pitch = program.k1 * tetta(vx, vy);
+        return program.tettaopt + (target_pitch - program.tettaopt) * smooth;
+    }
+
+    // There is no thrust after burnout. The simplified point-mass model assumes
+    // aerodynamic alignment of the separated head section with the velocity vector.
+    return tetta(vx, vy);
+}
+
+// --------------------------------------------------------------
+// Mass and moment of inertia
+// --------------------------------------------------------------
+double massAt(double t)
+{
+    t = std::max(0.0, t);
+
+    const double burned_stage1 = m1 * std::clamp(t / t1, 0.0, 1.0);
+    const double stage1_propellant = m1 - burned_stage1;
+    const double stage1_structure = (t < t1) ? m01 : 0.0;
+
+    const double stage2_elapsed = std::max(0.0, t - t1);
+    const double burned_stage2 = m2 * std::clamp(stage2_elapsed / t2, 0.0, 1.0);
+    const double stage2_propellant = m2 - burned_stage2;
+    const double stage2_structure = (t < tayt) ? m02 : 0.0;
+
+    return mpn + stage1_propellant + stage1_structure + stage2_propellant + stage2_structure;
+}
+double IZ(double t)
+{
+    if (t <= t1) return Iz1 + (Iz2 - Iz1) * (t / t1);
+    if (t <= t1 + t2) return Iz3 + (Iz4 - Iz3) * ((t - t1) / t2);
+    return Iz5;
+}
+
+double tetta(double vx, double vy)
+{
+    double v = sqrt(vx * vx + vy * vy);
+    if (v < 1e-3) return M_PI / 2;
+    return atan2(vy, vx);
+}
+double eta(double x, double y) { return atan2(x, R + y); }
+
+// --------------------------------------------------------------
+// Point-mass trajectory simulation with RK4 integration
+// --------------------------------------------------------------
+struct State
+{
+    double t;
+    double x;
+    double y;
+    double vx;
+    double vy;
+    double wz;
+};
+
+struct Derivative
+{
+    double x;
+    double y;
+    double vx;
+    double vy;
+    double wz;
+};
+
+dinamic evaluateState(const State& state, const PitchProgram& program)
+{
+    dinamic a{};
+    a.t = state.t;
+    a.x = state.x;
+    a.y = state.y;
+    a.v_x = state.vx;
+    a.v_y = state.vy;
+    a.wz = state.wz;
+    a.v = hypot(a.v_x, a.v_y);
+    a.r = hypot(a.x, R + a.y);
+    a.h = a.r - R;
+    a.eta = eta(a.x, a.y);
+    a.tetta = tetta(a.v_x, a.v_y);
+    a.pitch = pitchh(program, a.t, a.v_x, a.v_y);
+    a.alpha = wrapAngle(a.pitch - a.tetta);
+    a.L = R * a.eta;
+
+    const auto atm = atmosphere(a.h);
+    a.M = a.v / atm.a;
+    a.q = 0.5 * atm.rho * a.v * a.v;
+    a.m = massAt(a.t);
+    a.Iz = IZ(a.t);
+    a.g = atm.g;
+    a.P = Pe(atm.p, a.t);
+
+    const auto aero = Aerodynamic(a.M, a.alpha, a.t, a.q);
+    a.X = aero.X;
+    a.Y = aero.Y;
+    a.Mz = aero.Mz;
+    return a;
+}
+
+Derivative derivative(const State& state, const PitchProgram& program)
+{
+    const dinamic a = evaluateState(state, program);
+    const double g = a.g;
+
+    Derivative d{};
+    d.x = a.v_x;
+    d.y = a.v_y;
+    d.vx = (a.P * cos(a.pitch) - a.X * cos(a.tetta) - a.Y * sin(a.tetta)
+        - a.m * g * sin(a.eta)) / a.m;
+    d.vy = (a.P * sin(a.pitch) - a.X * sin(a.tetta) + a.Y * cos(a.tetta)
+        - a.m * g * cos(a.eta)) / a.m;
+    d.wz = a.Mz / a.Iz;
+    return d;
+}
+
+State addScaled(const State& state, const Derivative& derivative_value, double factor)
+{
+    return {
+        state.t + factor,
+        state.x + derivative_value.x * factor,
+        state.y + derivative_value.y * factor,
+        state.vx + derivative_value.vx * factor,
+        state.vy + derivative_value.vy * factor,
+        state.wz + derivative_value.wz * factor
+    };
+}
+
+State rk4Step(const State& state, const PitchProgram& program, double dt)
+{
+    const Derivative k1_value = derivative(state, program);
+    const Derivative k2_value = derivative(addScaled(state, k1_value, dt / 2.0), program);
+    const Derivative k3_value = derivative(addScaled(state, k2_value, dt / 2.0), program);
+    const Derivative k4_value = derivative(addScaled(state, k3_value, dt), program);
+
+    State result = state;
+    result.t += dt;
+    result.x += (k1_value.x + 2.0 * k2_value.x + 2.0 * k3_value.x + k4_value.x) * dt / 6.0;
+    result.y += (k1_value.y + 2.0 * k2_value.y + 2.0 * k3_value.y + k4_value.y) * dt / 6.0;
+    result.vx += (k1_value.vx + 2.0 * k2_value.vx + 2.0 * k3_value.vx + k4_value.vx) * dt / 6.0;
+    result.vy += (k1_value.vy + 2.0 * k2_value.vy + 2.0 * k3_value.vy + k4_value.vy) * dt / 6.0;
+    result.wz += (k1_value.wz + 2.0 * k2_value.wz + 2.0 * k3_value.wz + k4_value.wz) * dt / 6.0;
+    return result;
+}
+
+State interpolateState(const State& left, const State& right, double fraction)
+{
+    fraction = std::clamp(fraction, 0.0, 1.0);
+    return {
+        left.t + fraction * (right.t - left.t),
+        left.x + fraction * (right.x - left.x),
+        left.y + fraction * (right.y - left.y),
+        left.vx + fraction * (right.vx - left.vx),
+        left.vy + fraction * (right.vy - left.vy),
+        left.wz + fraction * (right.wz - left.wz)
+    };
+}
+
+void writeCsvHeader(std::ofstream& out)
+{
+    out << "t_s; x_m; y_m; h_m; v_mps; pitch_deg; tetta_deg; alpha_deg; L_m; "
+        << "vx_mps; vy_mps; m_kg; M; q_Pa; wz_radps; wz_degps; "
+        << "Mz_aero_Nm; Iz_kgm2; wz_dot_radps2; Cx; Cy; mz; X_N; Y_N\n";
+}
+
+void writeCsvRow(std::ofstream& out, const dinamic& a)
+{
+    const auto aero = Aerodynamic(a.M, a.alpha, a.t, a.q);
+    const double wz_dot = aero.Mz / a.Iz;
+    out << a.t << "; " << a.x << "; " << a.y << "; " << a.h << "; "
+        << a.v << "; " << radToDeg(a.pitch) << "; " << radToDeg(a.tetta) << "; "
+        << radToDeg(a.alpha) << "; " << a.L << "; " << a.v_x << "; " << a.v_y << "; "
+        << a.m << "; " << a.M << "; " << a.q << "; " << a.wz << "; " << radToDeg(a.wz) << "; "
+        << aero.Mz << "; " << a.Iz << "; " << wz_dot << "; "
+        << aero.Cx << "; " << aero.Cy << "; " << aero.mz << "; "
+        << aero.X << "; " << aero.Y << "\n";
+}
+
+bool validProgram(const PitchProgram& program)
+{
+    return program.tv > 8.0
+        && program.tv < program.topt
+        && program.topt < tayt
+        && program.topt - program.tv >= MIN_TOPT_GAP
+        && tayt - program.topt >= MIN_TOPT_GAP
+        && std::isfinite(program.k1)
+        && std::isfinite(program.tettaopt);
+}
+
+SimulationResult simulate(const PitchProgram& program, double dt, bool write_csv, const std::string& csv_path)
+{
+    SimulationResult result{};
+    if (!validProgram(program) || !(dt > 0.0)) return result;
+
+    std::ofstream out;
+    if (write_csv) {
+        out.open(csv_path, std::ios::out);
+        if (!out) throw std::runtime_error("Cannot open output file: " + csv_path);
+        out << std::fixed << std::setprecision(8);
+        writeCsvHeader(out);
+    }
+
+    State state{0.0, 0.0, 30.0, 0.0, 10.0, 0.0};
+    dinamic current = evaluateState(state, program);
+    result.max_height_m = current.h;
+    result.max_abs_alpha_deg = std::abs(radToDeg(current.alpha));
+    if (write_csv) writeCsvRow(out, current);
+
+    constexpr double MAX_SIMULATION_TIME_S = 3500.0;
+    while (state.t < MAX_SIMULATION_TIME_S) {
+        double step = dt;
+
+        // Land exactly on stage events to keep discontinuities out of RK4 substeps.
+        for (const double event_time : {t1, tayt}) {
+            if (state.t < event_time && state.t + step > event_time) {
+                step = event_time - state.t;
+            }
+        }
+
+        const State previous_state = state;
+        const dinamic previous = current;
+        state = rk4Step(state, program, step);
+        current = evaluateState(state, program);
+
+        if (!std::isfinite(current.h) || !std::isfinite(current.L) || !std::isfinite(current.v)
+            || !std::isfinite(current.alpha) || current.m <= 0.0) {
+            return result;
+        }
+
+        if (current.h < 0.0) {
+            const double fraction = previous.h / (previous.h - current.h);
+            const State impact_state = interpolateState(previous_state, state, fraction);
+            current = evaluateState(impact_state, program);
+        }
+
+        result.max_height_m = std::max(result.max_height_m, current.h);
+        result.max_abs_alpha_deg = std::max(result.max_abs_alpha_deg, std::abs(radToDeg(current.alpha)));
+        if (write_csv) writeCsvRow(out, current);
+
+        if (current.h <= 0.0 && state.t > 0.0) {
+            result.valid = true;
+            result.range_m = current.L;
+            result.impact_time_s = current.t;
+            result.impact_speed_mps = current.v;
+            return result;
+        }
+    }
+
+    return result;
+}
+
+// --------------------------------------------------------------
+// Differential-evolution optimizer
+// --------------------------------------------------------------
+using EncodedProgram = std::array<double, 4>;
+
+struct Candidate
+{
+    EncodedProgram x{};
+    PitchProgram program{};
+    SimulationResult result{};
+};
+
+PitchProgram decodeProgram(const EncodedProgram& encoded)
+{
+    const auto map = [](double value, double lower, double upper) {
+        value = std::clamp(value, 0.0, 1.0);
+        return lower + value * (upper - lower);
+    };
+
+    PitchProgram program{};
+    program.tv = map(encoded[0], MIN_TV, MAX_TV);
+    const double min_topt = program.tv + MIN_TOPT_GAP;
+    const double max_topt = tayt - MIN_TOPT_GAP;
+    program.topt = map(encoded[1], min_topt, max_topt);
+    program.k1 = map(encoded[2], MIN_K1, MAX_K1);
+    program.tettaopt = degToRad(map(encoded[3], MIN_TETTAOPT_DEG, MAX_TETTAOPT_DEG));
+    return program;
+}
+
+double constraintViolation(const Candidate& candidate)
+{
+    if (!candidate.result.valid) return 1.0e9;
+    const double alpha_excess = std::max(0.0, candidate.result.max_abs_alpha_deg - ALPHA_LIMIT_DEG);
+    const double range_shortfall = std::max(0.0, MIN_RANGE_KM - candidate.result.range_m / 1000.0);
+    return 10.0 * alpha_excess / ALPHA_LIMIT_DEG + range_shortfall / MIN_RANGE_KM;
+}
+
+bool isFeasible(const Candidate& candidate)
+{
+    return candidate.result.valid
+        && candidate.result.max_abs_alpha_deg < ALPHA_LIMIT_DEG
+        && candidate.result.range_m / 1000.0 >= MIN_RANGE_KM;
+}
+
+bool betterCandidate(const Candidate& left, const Candidate& right)
+{
+    const bool left_feasible = isFeasible(left);
+    const bool right_feasible = isFeasible(right);
+    if (left_feasible != right_feasible) return left_feasible;
+
+    if (left_feasible) return left.result.range_m > right.result.range_m;
+
+    const double left_violation = constraintViolation(left);
+    const double right_violation = constraintViolation(right);
+    if (std::abs(left_violation - right_violation) > 1.0e-12) return left_violation < right_violation;
+    if (left.result.max_abs_alpha_deg != right.result.max_abs_alpha_deg) {
+        return left.result.max_abs_alpha_deg < right.result.max_abs_alpha_deg;
+    }
+    return left.result.range_m > right.result.range_m;
+}
+
+Candidate evaluateCandidate(const EncodedProgram& encoded, double dt)
+{
+    Candidate candidate{};
+    candidate.x = encoded;
+    candidate.program = decodeProgram(encoded);
+    candidate.result = simulate(candidate.program, dt, false);
+    return candidate;
+}
+
+EncodedProgram encodeProgram(const PitchProgram& program)
+{
+    const auto invMap = [](double value, double lower, double upper) {
+        return std::clamp((value - lower) / (upper - lower), 0.0, 1.0);
+    };
+    EncodedProgram encoded{};
+    encoded[0] = invMap(program.tv, MIN_TV, MAX_TV);
+    const double min_topt = program.tv + MIN_TOPT_GAP;
+    const double max_topt = tayt - MIN_TOPT_GAP;
+    encoded[1] = invMap(program.topt, min_topt, max_topt);
+    encoded[2] = invMap(program.k1, MIN_K1, MAX_K1);
+    encoded[3] = invMap(radToDeg(program.tettaopt), MIN_TETTAOPT_DEG, MAX_TETTAOPT_DEG);
+    return encoded;
+}
+
+void printCandidate(const Candidate& candidate, const std::string& prefix)
+{
+    std::cout << prefix
+        << " tv=" << candidate.program.tv
+        << " s, topt=" << candidate.program.topt
+        << " s, k1=" << candidate.program.k1
+        << ", tettaopt=" << radToDeg(candidate.program.tettaopt)
+        << " deg | L=" << candidate.result.range_m / 1000.0
+        << " km, max|alpha|=" << candidate.result.max_abs_alpha_deg
+        << " deg, feasible=" << (isFeasible(candidate) ? "yes" : "no") << "\n";
+}
+
+Candidate optimizePitchProgram(int population_size, int generations, double optimization_dt, std::uint64_t seed)
+{
+    if (population_size < 8) throw std::invalid_argument("Population size must be at least 8");
+    if (generations < 1) throw std::invalid_argument("Generation count must be positive");
+
+    std::mt19937_64 rng(seed);
+    std::uniform_real_distribution<double> uniform(0.0, 1.0);
+    std::uniform_int_distribution<int> pick(0, population_size - 1);
+
+    std::vector<Candidate> population;
+    population.reserve(population_size);
+
+    // Keep a physically reasonable seed near the original program, but satisfy tv > 8 s.
+    const PitchProgram seed_program{9.0, 35.0, 0.98, degToRad(43.0)};
+    population.push_back(evaluateCandidate(encodeProgram(seed_program), optimization_dt));
+    while (static_cast<int>(population.size()) < population_size) {
+        EncodedProgram encoded{};
+        for (double& value : encoded) value = uniform(rng);
+        population.push_back(evaluateCandidate(encoded, optimization_dt));
+    }
+
+    auto best = [&]() -> Candidate {
+        return *std::min_element(population.begin(), population.end(), [](const Candidate& a, const Candidate& b) {
+            return betterCandidate(a, b);
+        });
+    };
+
+    constexpr double differential_weight = 0.78;
+    constexpr double crossover_probability = 0.90;
+
+    for (int generation = 1; generation <= generations; ++generation) {
+        for (int i = 0; i < population_size; ++i) {
+            int a, b, c;
+            do { a = pick(rng); } while (a == i);
+            do { b = pick(rng); } while (b == i || b == a);
+            do { c = pick(rng); } while (c == i || c == a || c == b);
+
+            EncodedProgram trial = population[i].x;
+            const int forced_dimension = static_cast<int>(rng() % trial.size());
+            for (int j = 0; j < static_cast<int>(trial.size()); ++j) {
+                if (uniform(rng) <= crossover_probability || j == forced_dimension) {
+                    trial[j] = population[a].x[j] + differential_weight * (population[b].x[j] - population[c].x[j]);
+                    trial[j] = std::clamp(trial[j], 0.0, 1.0);
+                }
+            }
+
+            Candidate evaluated = evaluateCandidate(trial, optimization_dt);
+            if (betterCandidate(evaluated, population[i])) population[i] = evaluated;
+        }
+
+        if (generation == 1 || generation % 10 == 0 || generation == generations) {
+            printCandidate(best(), "Generation " + std::to_string(generation) + ":");
+        }
+    }
+
+    // Re-rank the final coarse population with the final integration step.
+    Candidate best_fine = evaluateCandidate(population.front().x, 0.1);
+    for (const Candidate& coarse : population) {
+        Candidate fine = evaluateCandidate(coarse.x, 0.1);
+        if (betterCandidate(fine, best_fine)) best_fine = fine;
+    }
+
+    // Small deterministic local random refinement around the best point.
+    EncodedProgram center = best_fine.x;
+    for (int round = 0; round < 4; ++round) {
+        const double radius = 0.08 * std::pow(0.45, round);
+        std::uniform_real_distribution<double> perturb(-radius, radius);
+        for (int attempt = 0; attempt < 48; ++attempt) {
+            EncodedProgram trial = center;
+            for (double& value : trial) value = std::clamp(value + perturb(rng), 0.0, 1.0);
+            Candidate fine = evaluateCandidate(trial, 0.1);
+            if (betterCandidate(fine, best_fine)) {
+                best_fine = fine;
+                center = best_fine.x;
+            }
+        }
+    }
+
+    return best_fine;
+}
+
+void printUsage(const char* executable)
+{
+    std::cout << "Usage: " << executable
+        << " [--population N] [--generations N] [--opt-dt seconds] [--final-dt seconds] [--seed N]\n";
+}
+
+int main(int argc, char** argv)
+{
+    setlocale(LC_ALL, "Russian");
+
+    int population_size = 32;
+    int generations = 36;
+    double optimization_dt = 0.40;
+    double final_dt = 0.1;
+    std::uint64_t seed = 20260531ULL;
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (i + 1 >= argc) throw std::invalid_argument("Missing value for " + option);
+            return argv[++i];
+        };
+
+        if (arg == "--population") population_size = std::stoi(requireValue(arg));
+        else if (arg == "--generations") generations = std::stoi(requireValue(arg));
+        else if (arg == "--opt-dt") optimization_dt = std::stod(requireValue(arg));
+        else if (arg == "--final-dt") final_dt = std::stod(requireValue(arg));
+        else if (arg == "--seed") seed = std::stoull(requireValue(arg));
+        else if (arg == "--help") { printUsage(argv[0]); return 0; }
+        else throw std::invalid_argument("Unknown argument: " + arg);
+    }
+
+    std::cout << std::fixed << std::setprecision(6);
+    std::cout << "Optimizing pitch program for L >= " << MIN_RANGE_KM
+        << " km and |alpha| < " << ALPHA_LIMIT_DEG << " deg\n";
+
+    Candidate best = optimizePitchProgram(population_size, generations, optimization_dt, seed);
+    best.result = simulate(best.program, final_dt, true, "trajectory_optimized.csv");
+
+    std::cout << "\nFinal validated solution (dt=" << final_dt << " s):\n";
+    printCandidate(best, "Best:");
+    std::cout << "Maximum height = " << best.result.max_height_m / 1000.0 << " km\n";
+    std::cout << "Impact time = " << best.result.impact_time_s << " s\n";
+    std::cout << "Impact speed = " << best.result.impact_speed_mps << " m/s\n";
+    std::cout << "Trajectory saved to trajectory_optimized.csv\n";
+
+    if (!isFeasible(best)) {
+        std::cerr << "No feasible program found within the configured search budget. "
+            << "Increase --population and/or --generations.\n";
+        return 2;
+    }
+    return 0;
+}
