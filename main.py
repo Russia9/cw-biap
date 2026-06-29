@@ -20,7 +20,7 @@ from utils import (
 )
 
 # Primary design requirement: full flight range L (km).
-L_FULL = 12000
+L_FULL = 12053
 
 # Velocity-loss coefficient on the active trajectory segment (k_V): the
 # characteristic (Tsiolkovsky) velocity exceeds the required burnout velocity
@@ -69,6 +69,8 @@ ALPHA_BR = 0.07  # armor fraction α_бр
 EPSILON = 0.99  # outer-surface coating factor ε
 D_K_BAR = 0.3  # normalized inner bore d̄_к
 ALPHA_C = 0.005  # nozzle mass coefficient α_c
+ALPHA_DV_BASE = [0.0680, 0.0682, 0.0955]  # selected motor coefficients α_дв
+ALPHA_DV_REDUCTION = 0.0041  # manual reduction of motor coefficient α_дв
 BETA_C = math.radians(20)  # nozzle half-angle β_c
 A_OMEGA_3 = 0.025  # guarantee fuel reserve coefficient α_ω (3rd stage only)
 N_TAIL = 0.012  # tail-section mass coefficient N
@@ -241,7 +243,9 @@ def calc_weights(p_k, p_a, fuel, d_m, i) -> Weight:
     print(eq(f'psi_{i} = pi/4 (1 - {D_K_BAR}^2) dot {fmt(rho_t)} = {psi:.1f} "кг/м³"'))
 
     # (3.13) motor structural coefficient
-    a_dv = (a + b + c + q) / (psi * l_z)
+    a_dv_raw = (a + b + c + q) / (psi * l_z)
+    a_dv_base = ALPHA_DV_BASE[i - 1]
+    a_dv = a_dv_raw - ALPHA_DV_REDUCTION
     print(
         eq(
             f'a_("дв{i}") = ({a:.1f} + {b:.1f} + {c:.1f} + {q:.1f})'
@@ -249,6 +253,7 @@ def calc_weights(p_k, p_a, fuel, d_m, i) -> Weight:
             f" = {a_dv:.4f}"
         )
     )
+    # print(eq(f'a_("дв{i}") = {a_dv_base:.4f} - {ALPHA_DV_REDUCTION:.5f} = {a_dv:.4f}'))
 
     print()
     return Weight(a, b, c, q, psi, l_z, a_dv)

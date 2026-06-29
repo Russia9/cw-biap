@@ -48,7 +48,7 @@ var Aref = math.Pi * RrefAll * RrefAll
 
 // DragScale multiplies the CFD drag coefficient. Set to 0.9 to use 90 % of the
 // tabulated Cd (sensitivity study against the openfoam coefficients).
-const DragScale = 0.9
+const DragScale = 1.0
 
 // Limits are the constructive-ballistic reporting thresholds (§4.4). The
 // simulator measures the achieved maxima and flags whether each limit is met.

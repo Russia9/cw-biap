@@ -11,6 +11,7 @@ Coursework for BIAP (ballistic/thrust design of a solid-fuel multi-stage rocket)
 ```bash
 uv run python main.py        # thrust/specific-impulse calculations → Typst math blocks
 uv run python preliminary.py # burn-rate and l_z/alpha_dv preliminary tables
+uv run python cad.py         # detailed STEP CAD model (CadQuery) → rocket.step
 ```
 
 ## Architecture
