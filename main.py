@@ -19,6 +19,7 @@ from utils import (
     load_trajectory,
     specific_thrust_corrected,
     specific_thrust_design,
+    specific_thrust_ground,
     specific_thrust_vacuum,
 )
 
@@ -94,6 +95,7 @@ class Thrust(NamedTuple):
     P_ud_pr: float  # corrected standard specific thrust
     P_ud_r: float  # design-condition specific thrust
     T: float  # combustion temperature, K
+    P_ud_0: float  # ground-level specific thrust P_уд.0
     P_ud_v: float  # vacuum specific thrust
 
 
@@ -129,6 +131,7 @@ def calc_thrust(p_k, p_a, fuel, i) -> Thrust:
     P_ud_pr = specific_thrust_corrected(P_ud_st, a)
     P_ud_r = specific_thrust_design(P_ud_pr, p_k, p_a)
     T = combustion_temp(T_st, p_k)
+    P_ud_0 = specific_thrust_ground(P_ud_pr, p_k)
     P_ud_v = specific_thrust_vacuum(P_ud_r, R, T, k, p_a, p_k)
 
     # Equation 1: corrected standard specific thrust
@@ -154,6 +157,17 @@ def calc_thrust(p_k, p_a, fuel, i) -> Thrust:
     body = f'T_{i} = {fmt(T_st)} + 1.12 dot ({fmt(p_k)} - 40) = {T:.1f} "К"'
     print(eq(body))
 
+    # Ground-level specific thrust: formula (3.3) at p_a = 1 bar. Only the first
+    # stage needs it — it is the P_уд.01 term of (3.6) — so only that one is
+    # emitted, matching the dashes in the summary table.
+    if i == 1:
+        body = (
+            f'P_"уд.0{i}" = {P_ud_pr:.2f} + 19.4 + 0.76 dot {fmt(p_k)}'
+            f" - 0.003 dot {fmt(p_k)}^2 - 70 dot 1 + 25 dot 1^2"
+            f' = {P_ud_0:.2f} "с"'
+        )
+        print(eq(body))
+
     # Equation 4: vacuum specific thrust
     km1_k = f"({k}-1)/{k}"
     body = (
@@ -165,7 +179,7 @@ def calc_thrust(p_k, p_a, fuel, i) -> Thrust:
     print(eq(body))
 
     print()
-    return Thrust(P_ud_pr, P_ud_r, T, P_ud_v)
+    return Thrust(P_ud_pr, P_ud_r, T, P_ud_0, P_ud_v)
 
 
 def calc_weights(p_k, p_a, fuel, d_m, i) -> Weight:
@@ -279,22 +293,28 @@ def emit_thrust() -> tuple[list[Thrust], float]:
         stage_header(i)
         thrust.append(calc_thrust(s["p_k"], s["p_a"], s["fuel"], i))
 
-    labels = ['$P_"уд.ст"^"пр"$, с', '$P_"уд"^"р"$, с', "$T$, К", '$P_"уд.п"$, с']
-    fmts = [".2f", ".2f", ".1f", ".2f"]
-    attrs = ["P_ud_pr", "P_ud_r", "T", "P_ud_v"]
+    labels = ['$P_"уд.ст"^"пр"$, с', '$P_"уд"^"р"$, с', "$T$, К"]
+    fmts = [".2f", ".2f", ".1f"]
+    attrs = ["P_ud_pr", "P_ud_r", "T"]
     rows = [
         param_row(label, [getattr(t, attr) for t in thrust], spec)
         for label, spec, attr in zip(labels, fmts, attrs)
     ]
+    # P_уд.0 is only used for the first stage (the P_уд.01 term of 3.6); the
+    # upper stages never fire at sea level, so their cells are dashed.
+    rows.append(
+        param_row('$P_"уд.0"$, с', [f"${thrust[0].P_ud_0:.2f}$", "[---]", "[---]"])
+    )
+    rows.append(param_row('$P_"уд.п"$, с', [t.P_ud_v for t in thrust], ".2f"))
     param_table(rows)
     print()
 
-    P_ud_r1 = thrust[0].P_ud_r
+    P_ud_01 = thrust[0].P_ud_0
     P_ud_v1, P_ud_v2, P_ud_v3 = (t.P_ud_v for t in thrust)
-    P_ud_avg = (((P_ud_r1 + P_ud_v1) / 2) + P_ud_v2 + P_ud_v3) / 3
+    P_ud_avg = (((P_ud_01 + P_ud_v1) / 2) + P_ud_v2 + P_ud_v3) / 3
     print(
         eq(
-            f'P_"уд.ср" = 1/3 (({P_ud_r1:.2f}+{P_ud_v1:.2f})/2'
+            f'P_"уд.ср" = 1/3 (({P_ud_01:.2f}+{P_ud_v1:.2f})/2'
             f"+{P_ud_v2:.2f}+{P_ud_v3:.2f})"
             f' = {P_ud_avg:.2f} "с"'
         )

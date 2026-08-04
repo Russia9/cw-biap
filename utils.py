@@ -97,6 +97,17 @@ def specific_thrust_design(P_ud_pr, p_k, p_a):
     return P_ud_pr + 19.4 + 0.76 * p_k - 0.003 * p_k**2 - 70 * p_a + 25 * p_a**2
 
 
+def specific_thrust_ground(P_ud_pr, p_k):
+    """Ground-level specific thrust P_уд.0 (s) at chamber pressure p_k (bar).
+
+    Formula (3.3) evaluated at p_a = 1 bar. P_уд.ст (and hence P_уд.ст^пр) is
+    defined at the standard point p_k = 40 bar, p_a = 1 bar, where the (3.3)
+    correction is identically zero; holding p_a = 1 and moving only p_k gives
+    the specific thrust with the nozzle exhausting against sea-level pressure.
+    """
+    return specific_thrust_design(P_ud_pr, p_k, 1.0)
+
+
 def combustion_temp(T_st, p_k):
     """Actual combustion temperature (K) at chamber pressure p_k (bar)."""
     return T_st + 1.12 * (p_k - 40)
