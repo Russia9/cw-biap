@@ -24,14 +24,27 @@ type partTable struct {
 }
 
 // AeroTable provides Cd, Cl, CmPitch lookups per rocket part. All coefficients
-// share the openfoam reference (Aref, Lref).
+// share the reference geometry (Aref, Lref) declared in config.go.
 type AeroTable struct {
 	parts map[string]*partTable
+}
+
+// ZeroAero returns an empty table. Every lookup resolves to no part, so Coeffs
+// returns (0, 0, 0) and the rocket flies with no drag, lift or pitch moment.
+// Used while the CFD data set is absent; the force path in model.go is
+// unchanged and simply multiplies by zero.
+func ZeroAero() *AeroTable {
+	return &AeroTable{parts: map[string]*partTable{}}
 }
 
 // fallbacks lists, for each flight part, the substitute part to use when the
 // part's own CFD data is not present yet (the sweep is still running). The
 // warhead-alone "head" case falls back to the stage-3 stack.
+//
+// The four keys are the staging configurations the coefficients were swept for:
+// "all" is the full stack, "stage2up"/"stage3up" are the stacks remaining after
+// the first and second separations, and "head" is the warhead alone on the
+// passive leg.
 var fallbacks = map[string][]string{
 	"head":     {"head", "stage3up", "stage2up", "all"},
 	"stage3up": {"stage3up", "stage2up", "all"},
@@ -39,9 +52,8 @@ var fallbacks = map[string][]string{
 	"all":      {"all"},
 }
 
-// LoadAero parses an averages.csv (openfoam/results/averages.csv) into an
-// AeroTable. Columns are located by header name so added columns/rows are
-// tolerated.
+// LoadAero parses a CFD averages.csv into an AeroTable. Columns are located by
+// header name so added columns/rows are tolerated.
 func LoadAero(path string) (*AeroTable, error) {
 	f, err := os.Open(path)
 	if err != nil {

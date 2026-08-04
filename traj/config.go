@@ -29,16 +29,18 @@ type Stage struct {
 	IspSL    float64 // specific impulse at sea level (P_уд.р) [s]
 	IspVac   float64 // specific impulse in vacuum (P_уд.п) [s]
 	MotorDia float64 // motor diameter [m]
-	AeroPart string  // aerodynamic part key in averages.csv
+	AeroPart string  // aerodynamic part key (see fallbacks in aero.go)
 }
 
 // MassFlow returns the constant second-mass-flow β = MFuel/BurnTime [kg/s].
 func (s Stage) MassFlow() float64 { return s.MFuel / s.BurnTime }
 
 const (
-	// Reference geometry shared by all aerodynamic coefficients in
-	// averages.csv (openfoam gen_case.py: Aref = π·R_all², lRef = L_all from
-	// the full-rocket STL bounding box; CofR at the nose).
+	// Reference geometry shared by all aerodynamic coefficients, with the
+	// centre of rotation at the nose. Taken from the report geometry: RrefAll
+	// is half the stage-1 motor diameter d_(м 1) = 1.58 m (table 3.13), and
+	// Lref is the full stack height, the sum of the stage lengths
+	// L = 7.72 + 4.33 + 2.85 m plus the payload section.
 	RrefAll = 0.79   // full-rocket max radius [m] -> Aref = π·0.79² = 1.96 m²
 	Lref    = 18.293 // full-rocket length [m]
 )
@@ -46,8 +48,9 @@ const (
 // Aref is the reference area for aerodynamic forces/moments [m²].
 var Aref = math.Pi * RrefAll * RrefAll
 
-// DragScale multiplies the CFD drag coefficient. Set to 0.9 to use 90 % of the
-// tabulated Cd (sensitivity study against the openfoam coefficients).
+// DragScale multiplies the tabulated drag coefficient, for sensitivity studies
+// against the CFD data. Set to 0.9 to use 90 % of the tabulated Cd. Has no
+// effect while aerodynamics are zeroed (see ZeroAero in aero.go).
 const DragScale = 1.0
 
 // Limits are the constructive-ballistic reporting thresholds (§4.4). The

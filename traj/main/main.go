@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	aeroPath := flag.String("aero", "../openfoam/results/averages.csv", "path to openfoam averages.csv")
+	aeroPath := flag.String("aero", "", "path to a CFD averages.csv (empty: zero aerodynamics)")
 	configPath := flag.String("config", "", "rocket JSON config path (default: built-in rocket)")
 	outPath := flag.String("out", "out/traj.csv", "trajectory CSV output path")
 	step := flag.Float64("h", 0.1, "integration step [s]")
@@ -17,8 +17,14 @@ func main() {
 	metrics := flag.Bool("metrics", false, "print one JSON metrics line and skip CSV/diagnostics (for the optimizer)")
 	flag.Parse()
 
-	at, err := traj.LoadAero(*aeroPath)
-	if err != nil {
+	var (
+		at  *traj.AeroTable
+		err error
+	)
+	if *aeroPath == "" {
+		at = traj.ZeroAero()
+		fmt.Fprintln(os.Stderr, "aero: no table supplied, running with ZERO aerodynamics")
+	} else if at, err = traj.LoadAero(*aeroPath); err != nil {
 		fmt.Fprintln(os.Stderr, "load aero:", err)
 		os.Exit(1)
 	}
