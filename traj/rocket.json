@@ -1,14 +1,14 @@
 {
-  "payload_mass": 620.0,
+  "payload_mass": 620,
   "payload_part": "head",
   "t_vertical": 12.676344901789616,
   "stages": [
     {
-      "m0": 29677,
+      "m0": 30568,
       "m_fuel": 20101,
       "burn_time": 66.4,
-      "isp_sl": 257.345,
-      "isp_vac": 278.025,
+      "isp_sl": 233.95,
+      "isp_vac": 252.747,
       "dm": 1.58,
       "part": "all",
       "pitch": [
@@ -26,11 +26,11 @@
       ]
     },
     {
-      "m0": 8528,
+      "m0": 8702,
       "m_fuel": 5722,
       "burn_time": 43.0,
-      "isp_sl": 268.422,
-      "isp_vac": 292.325,
+      "isp_sl": 244.015,
+      "isp_vac": 265.751,
       "dm": 1.17,
       "part": "stage2up",
       "pitch": [
@@ -42,11 +42,11 @@
       ]
     },
     {
-      "m0": 2449,
+      "m0": 2476,
       "m_fuel": 1628,
       "burn_time": 30.8,
-      "isp_sl": 282.898,
-      "isp_vac": 302.742,
+      "isp_sl": 257.183,
+      "isp_vac": 275.219,
       "dm": 0.84,
       "part": "stage3up",
       "pitch": [
@@ -58,5 +58,10 @@
       ]
     }
   ],
-  "limits": { "eps1": 1.5, "eps2": 10.0, "theta_dot_max": 3.0, "qmax": 120000 }
+  "limits": {
+    "eps1": 1.5,
+    "eps2": 10.0,
+    "theta_dot_max": 3.0,
+    "qmax": 120000
+  }
 }

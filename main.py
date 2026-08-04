@@ -1,4 +1,7 @@
+import json
 import math
+import sys
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
@@ -49,6 +52,9 @@ STAGES = [
 # Payload carried by the top stage: warhead m_бч plus control unit m_ау (kg).
 M_BCH = 500
 M_AU = 120
+
+# Trajectory-simulator config kept in sync by sync_traj_config().
+TRAJ_CONFIG_PATH = "traj/rocket.json"
 
 # -------------------------------------------------------------------
 # Material properties (assets/materials.csv)
@@ -101,6 +107,15 @@ class Weight(NamedTuple):
     psi: float  # propellant charge coefficient
     l_z: float  # charge elongation λ_з
     a_dv: float  # motor structural coefficient
+
+
+class Subrockets(NamedTuple):
+    """Per-stage subrocket sizing results (3.19–3.25)."""
+
+    m0: list[float]  # subrocket launch masses m_(0 i), kg
+    omega_z: list[float]  # propellant charge masses ω_(з i), kg
+    dt: list[float]  # motor burn times Δt_(к i), s
+    d_m: list[float]  # motor diameters d_(м i), m
 
 
 def calc_thrust(p_k, p_a, fuel, i) -> Thrust:
@@ -379,7 +394,7 @@ def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> float:
 
 def emit_masses(
     weight: list[Weight], k_values: list[float], mu_k: float, thrust: list[Thrust]
-) -> None:
+) -> Subrockets:
     """Subrocket masses (3.19/3.20), motor diameters (3.21), burn times (3.22),
     thrust-to-weight (3.23), midsection load (3.24), propellant mass (3.25),
     thrust (3.26), and stage lengths (3.27)."""
@@ -528,7 +543,7 @@ def emit_masses(
     ]
     param_table(rows)
     print()
-    return d_m
+    return Subrockets(m0=m0, omega_z=omega_z, dt=dt, d_m=d_m)
 
 
 def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
@@ -778,12 +793,81 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
     print()
 
 
+def traj_stage_fields(thrust: list[Thrust], sub: Subrockets) -> list[dict]:
+    """Per-stage physical fields of traj/rocket.json, rounded to the precision
+    the report tables quote so the document and the simulator agree digit for
+    digit.
+
+    Note isp_sl is fed P_уд.р, the specific thrust at the *designed* exit
+    pressure p_a (0.70/0.37/0.14 bar), while traj/model.go interpolates it as a
+    true sea-level value. That mismatch is inherited from the report and is not
+    corrected here."""
+    return [
+        {
+            "m0": round(sub.m0[i]),
+            "m_fuel": round(sub.omega_z[i]),
+            "burn_time": round(sub.dt[i], 1),
+            "isp_sl": round(thrust[i].P_ud_r, 3),
+            "isp_vac": round(thrust[i].P_ud_v, 3),
+            "dm": round(sub.d_m[i], 2),
+        }
+        for i in range(len(STAGES))
+    ]
+
+
+def sync_traj_config(thrust: list[Thrust], sub: Subrockets, write: bool) -> None:
+    """Keep the physical fields of traj/rocket.json in sync with this script.
+
+    This script owns payload_mass and the per-stage m0/m_fuel/burn_time/
+    isp_sl/isp_vac/dm. Everything else in that file — t_vertical, the pitch
+    arcs, limits and the part keys — is optimizer output and is preserved
+    verbatim.
+
+    Without ``write`` the file is only checked, and any drift is reported on
+    stderr so that piping stdout into the Typst report stays unaffected."""
+    path = Path(TRAJ_CONFIG_PATH)
+    if not path.exists():
+        return
+
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    payload = round(M_BCH + M_AU)
+    fields = traj_stage_fields(thrust, sub)
+
+    drift = []
+    if cfg.get("payload_mass") != payload:
+        drift.append(f"payload_mass: {cfg.get('payload_mass')} -> {payload}")
+    for i, (stage, want) in enumerate(zip(cfg.get("stages", []), fields), start=1):
+        for key, value in want.items():
+            if stage.get(key) != value:
+                drift.append(f"stage {i} {key}: {stage.get(key)} -> {value}")
+
+    if not drift:
+        return
+
+    if not write:
+        print(
+            f"warning: {TRAJ_CONFIG_PATH} is out of sync with main.py "
+            f"({len(drift)} field(s)); rerun with --write-traj-config",
+            file=sys.stderr,
+        )
+        for line in drift:
+            print(f"  {line}", file=sys.stderr)
+        return
+
+    cfg["payload_mass"] = payload
+    for stage, want in zip(cfg.get("stages", []), fields):
+        stage.update(want)
+    path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"updated {TRAJ_CONFIG_PATH} ({len(drift)} field(s))", file=sys.stderr)
+
+
 def main():
     thrust, P_ud_avg = emit_thrust()
     weight, k_values = emit_weights()
     mu_k = emit_trajectory(thrust, P_ud_avg)
-    d_m = emit_masses(weight, k_values, mu_k, thrust)
-    emit_geometry(weight, d_m)
+    sub = emit_masses(weight, k_values, mu_k, thrust)
+    emit_geometry(weight, sub.d_m)
+    sync_traj_config(thrust, sub, write="--write-traj-config" in sys.argv)
 
 
 if __name__ == "__main__":
