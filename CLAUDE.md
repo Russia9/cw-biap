@@ -4,19 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-Coursework for BIAP (ballistic/thrust design of a solid-fuel multi-stage rocket). Computations produce Typst-formatted math equations and table rows for a report — output is printed to stdout and pasted into the document.
+Coursework for BIAP (ballistic/thrust design of a solid-fuel three-stage rocket). Computations produce Typst-formatted math equations and table rows for a report — output is printed to stdout and pasted into the document. A Go trajectory simulator under `traj/` checks the resulting design against the §4.4 constructive-ballistic limits.
 
 ## Running scripts
 
 ```bash
 uv run python main.py        # thrust/specific-impulse calculations → Typst math blocks
 uv run python preliminary.py # burn-rate and l_z/alpha_dv preliminary tables
-uv run python cad.py         # detailed STEP CAD model (CadQuery) → rocket.step
+uv run python main.py --write-traj-config  # resync traj/rocket.json with main.py
+
+cd traj
+go build ./... && go test ./...            # build and test the simulator
+go run ./main -config=rocket.json          # → out/traj.csv + §4.4 diagnostics
+uv run python optimize.py                  # CMA-ES pitch program → out/best.json
+uv run python plot_trajectory.py           # charts from out/traj.csv
 ```
 
 ## Architecture
 
-Four layers:
+Four layers on the Python side:
 
 1. **`assets/*.csv`** — raw data tables digitized from textbook charts:
    - `fuels.csv` — fuel properties (ρ, R, k, T, P_ud, burn-rate law, Al%)
@@ -28,7 +34,15 @@ Four layers:
 
 3. **`typst.py`** — pure presentation/rendering layer, kept separate from physics: `eq()` (wrap a math body), `fmt()`, `section()`, `param_row()`/`param_table()` (emit Typst `table(...)` rows with a `[Параметр]` column plus per-stage columns).
 
-4. **`main.py` / `preliminary.py`** — calculation scripts. Each defines a `STAGES` list / constants at the top and a `main()` that prints Typst snippets. In `main.py`, keep the split: `calc_*` functions are pure (return `Thrust`/`Weight` NamedTuples), and `emit_*` functions do the printing — don't mix computation into the emit functions.
+4. **`main.py` / `preliminary.py`** — calculation scripts. Each defines a `STAGES` list / constants at the top and a `main()` that prints Typst snippets. In `main.py`, keep the split: `calc_*` functions are pure (return `Thrust`/`Weight`/`Subrockets` NamedTuples), and `emit_*` functions do the printing — don't mix computation into the emit functions.
+
+## Trajectory layer (`traj/`)
+
+Go package `traj` (planar spherical-Earth RK4, GOST 4401-81 atmosphere, programmed pitch angle) with the CLI in `traj/main/`, plus `optimize.py` (CMA-ES over the pitch program) and `plot_trajectory.py`.
+
+`main.py` is the single source of truth for the physical fields of `traj/rocket.json` — `payload_mass` and each stage's `m0`, `m_fuel`, `burn_time`, `isp_sl`, `isp_vac`, `dm`. Never hand-edit those; change `main.py` and run `--write-traj-config`. A bare `main.py` run warns on stderr when they drift. The `t_vertical`, `pitch` and `limits` fields are optimizer output and are preserved by the writer.
+
+**Aerodynamics are currently zeroed.** The CFD table was removed from the repo; `traj.ZeroAero()` supplies an empty coefficient table so drag, lift and pitch moment are all zero, and the force path in `model.go` is unchanged (it just multiplies by zero). Pass `-aero=<averages.csv>` to restore real coefficients. Dynamic pressure, Mach and angle of attack come from the atmosphere and kinematics, so the §4.4 constraints stay meaningful.
 
 ## Output format
 
@@ -40,4 +54,4 @@ Multi-curve charts store each curve as a pair of columns (X, Y). Row 0 holds cur
 
 ## Python environment
 
-Use `uv` (see global CLAUDE.md). Python 3.11, dependencies: `pandas`, `numpy` (via pandas), `pandas-stubs`.
+Use `uv` (see global CLAUDE.md). Python 3.11, dependencies: `numpy`, `pandas`, `pandas-stubs`, `cma` and `matplotlib` (the latter two for `traj/`). Go 1.26 for the simulator.
