@@ -29,9 +29,21 @@ BIN = HERE / "out" / "traj-sim"
 BASE_CONFIG = HERE / "rocket.json"
 
 # Objective weights. SCALE_L sets the range-error scale (km); a miss of SCALE_L
-# costs 1. W_CON makes any constraint violation dominate once the range is close.
+# costs 1. W_CON makes any constraint violation dominate the range term.
+#
+# W_CON has to stay far above (miss/SCALE_L)^2. When the target is out of the
+# rocket's reach the range term never approaches zero — a 4000 km miss alone
+# costs 1.6e3 — and its gradient is roughly constant, so a moderate W_CON lets
+# the optimizer buy range by violating the α and q limits. Those are hard §4.4
+# design limits, so the weight is set high enough that any violation outweighs
+# the whole range term.
+#
+# A one-sided penalty puts the optimum exactly on the constraint, so it lands
+# a hair either side of it. CON_MARGIN shrinks the limits during the search by
+# 0.1 % so the converged solution is strictly inside the reported limits.
 SCALE_L = 100.0
-W_CON = 1000.0
+W_CON = 1.0e7
+CON_MARGIN = 1.0e-3
 W_MONO = 10.0
 W_TIME = 1000.0
 DEFAULT_K_EXP = 3.0
@@ -240,7 +252,7 @@ def objective(x, target_km, h) -> float:
     f = f_prog + ((m["impact_range_km"] - target_km) / SCALE_L) ** 2
 
     def pen(val, lim):
-        return max(0.0, (val - lim) / lim) ** 2
+        return max(0.0, (val - lim * (1.0 - CON_MARGIN)) / lim) ** 2
 
     f += W_CON * pen(m["max_alpha_sub_deg"], m["lim_eps1"])
     f += W_CON * pen(m["max_alpha_sup_deg"], m["lim_eps2"])
@@ -258,8 +270,12 @@ def main() -> None:
     ap.add_argument(
         "--sigma0", type=float, default=1.0, help="global CMA-ES step multiplier"
     )
+    ap.add_argument("--seed", type=int, default=20260805, help="CMA-ES RNG seed")
+    # Search and verification must use the same step: at h=0.5 the α peaks read
+    # ~0.1 deg low, which is enough to make a solution that looks feasible
+    # during the search violate the limits at h=0.1.
     ap.add_argument(
-        "--h-opt", type=float, default=0.5, help="integration step during search [s]"
+        "--h-opt", type=float, default=0.1, help="integration step during search [s]"
     )
     ap.add_argument(
         "--h-final",
@@ -292,32 +308,41 @@ def main() -> None:
         "CMA_stds": cma_stds(),
         "maxiter": args.maxiter,
         "verb_disp": 10,
+        "seed": args.seed,
     }
     es = cma.CMAEvolutionStrategy(x0, args.sigma0, opts)
     es.optimize(lambda x: objective(x, args.target, args.h_opt))
 
     best = es.result.xbest
     print(f"\nbest params:\n  {format_params(best)}")
-    m = metrics(best, args.h_final)
-    print(
-        f"impact range     : {m['impact_range_km']:.1f} km (target {args.target:.0f})"
-    )
-    print(
-        "constraints      : "
-        f"|α|sub={m['max_alpha_sub_deg']:.2f}/{m['lim_eps1']:.0f} "
-        f"|α|sup={m['max_alpha_sup_deg']:.2f}/{m['lim_eps2']:.0f} "
-        f"ϑ̇={m['max_pitch_rate_dps']:.2f}/{m['lim_theta_dot']:.0f} "
-        f"q={m['max_q_pa'] / 1000:.1f}/{m['lim_qmax'] / 1000:.0f} kPa"
-    )
 
-    # Persist the best config and print a reproducible run command.
+    # Persist the best config before anything that can fail, so a broken final
+    # run never discards the whole search.
     best_path = HERE / "out" / "best.json"
     best_path.parent.mkdir(exist_ok=True)
     with open(best_path, "w") as f:
         json.dump(config_from_x(best), f, indent=2)
-    print(f"\nwrote best config -> {best_path}")
+    print(f"wrote best config -> {best_path}")
     print(
         f"run command:\n  ./out/traj-sim -config=out/best.json -h={args.h_final} -out=out/traj.csv"
+    )
+
+    try:
+        m = metrics(best, args.h_final)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as exc:
+        print(f"\nfinal metrics run failed: {exc}")
+        return
+    miss = m["impact_range_km"] - args.target
+    print(
+        f"\nimpact range     : {m['impact_range_km']:.1f} km "
+        f"(target {args.target:.0f}, miss {miss:+.1f})"
+    )
+    print(
+        "constraints      : "
+        f"|α|sub={m['max_alpha_sub_deg']:.2f}/{m['lim_eps1']:.2f} "
+        f"|α|sup={m['max_alpha_sup_deg']:.2f}/{m['lim_eps2']:.2f} "
+        f"ϑ̇={m['max_pitch_rate_dps']:.2f}/{m['lim_theta_dot']:.2f} "
+        f"q={m['max_q_pa'] / 1000:.1f}/{m['lim_qmax'] / 1000:.0f} kPa"
     )
 
     # Final fine-step run: writes out/traj.csv and prints the full diagnostics.
