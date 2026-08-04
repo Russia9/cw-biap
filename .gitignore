@@ -219,8 +219,15 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Generated CAD artifacts (regenerate via `make stls`)
-*.stl
+# macOS
+.DS_Store
+
+# Trajectory simulator: compiled binary and regenerable run output.
+# traj/out/best.json is the actual result and stays tracked.
+traj/out/traj-sim
+traj/out/traj.csv
+traj/tmp*.json
 *.png
-openfoam/results/*.csv
-!openfoam/results/averages.csv
+
+# CMA-ES scratch output, rewritten on every optimizer run.
+outcmaes/
