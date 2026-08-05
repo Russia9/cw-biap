@@ -285,11 +285,9 @@ def calc_weights(p_k, p_a, fuel, d_m, i) -> Weight:
 
 def emit_thrust() -> tuple[list[Thrust], float]:
     """Specific-thrust section: per-stage equations, summary table, P_уд.ср."""
-    section("Удельная тяга")
+    section("Удельная тяга", "(3.1) - (3.6)")
     thrust = []
     for i, s in enumerate(STAGES, 1):
-        if i == 3:
-            print("#pagebreak()")
         stage_header(i)
         thrust.append(calc_thrust(s["p_k"], s["p_a"], s["fuel"], i))
 
@@ -325,9 +323,7 @@ def emit_thrust() -> tuple[list[Thrust], float]:
 
 def emit_weights() -> tuple[list[Weight], list[float]]:
     """Weight-coefficient section: per-stage equations and the K_i table."""
-    section("Весовые коэффициенты")
-    print("Проведем расчеты для всех ступеней по формулам $(3.7) - (3.14)$:")
-    print()
+    section("Весовые коэффициенты", "(3.7) - (3.14)")
     weight = []
     for i, s in enumerate(STAGES, 1):
         stage_header(i)
@@ -365,7 +361,7 @@ def emit_weights() -> tuple[list[Weight], list[float]]:
 
 def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> float:
     """Active-segment section: end-of-burn parameters, V_к and relative weights."""
-    section("Параметры в конце активного участка")
+    section("Параметры в конце активного участка", "(3.15) - (3.18)")
     h_k = np.interp(L_FULL, TRAJ_RANGE, TRAJ_HK)
     l_k = np.interp(L_FULL, TRAJ_RANGE, TRAJ_LK)
     theta_k = np.interp(L_FULL, TRAJ_RANGE, TRAJ_THETA)
@@ -418,45 +414,10 @@ def emit_masses(
     """Subrocket masses (3.19/3.20), motor diameters (3.21), burn times (3.22),
     thrust-to-weight (3.23), midsection load (3.24), propellant mass (3.25),
     thrust (3.26), and stage lengths (3.27)."""
-    section("Массы и геометрия субракет")
+    section("Массы и геометрия субракет", "(3.19) - (3.27)")
     n = len(STAGES)
 
     u = [burn_rate(s["fuel"], s["p_k"])[0] for s in STAGES]
-
-    # ---- Introductory text with generic formula definitions ----
-    print(
-        "Пользуясь таблицей 3.11 и формулами $(3.19)$, $(3.20)$, рассчитаем массы субракет."
-    )
-    print()
-    print("$ m_(0 i) = (m_(0 i+1))/(1-N_i (1+K_i) mu_(k i)) $")
-    print('$ m_n = (m_"бч" + m_"ау")/(1-N_n-(1+K_n)mu_(k n)) $')
-    print()
-    print("Диаметры ступеней получим по формуле $(3.21)$:")
-    print(
-        '$ d_(м i) = root(3, ((1-N_i)m_(0 i)-m_"пн")/((1+alpha_("дв" i)) psi_i overline(l_(з i)) )) $'
-    )
-    print()
-    print("Время работы двигателя получим по формуле $(3.22)$:")
-    print("$ Delta t_(к i) = d_(м i) (1-overline(d)_к)/(2 u_i) $")
-    print()
-    print("Коэффициенты тяговооруженности субракет получим по формуле $(3.23)$:")
-    print('$ lambda_([0\\/п] i) = (t_(к i))/(mu_(к i) P_("уд." [0\\/п] i)) $')
-    print()
-    print("Найдем начальную поперечную нагрузку на мидель ракеты по формуле $(3.24)$:")
-    print('$ P_(м 1) = 4m_01/pi d_"м1"^2 $')
-    print()
-    print("Найдем массы топливных зарядов ступеней по формуле $(3.25)$.")
-    print("$ omega_(з i) = mu_(к i) m_(0 i) $")
-    print()
-    print("Найдем значения тяги в пустоте и (или) в вакууме по формуле $(3.26)$.")
-    print('$ P = P_"уд" g_0 dot(m) $')
-    print()
-    print("#pagebreak()")
-    print("Найдем длины всех ступеней по формуле $(3.27)$:")
-    print("$ l_(к i) approx 1.15 overline(l_(з i)) d_(м i) $")
-    print()
-    print("Проведем расчеты для всех ступеней по формулам $(3.19) - (3.27)$:")
-    print()
 
     # ---- Compute all values (m0 top-down, rest in stage order) ----
     m0 = [0.0] * n
@@ -574,7 +535,7 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
     igniter, charge and channel diameters (3.35–3.37); nozzle convergent and
     divergent lengths, igniter/bottoms sizes and overall stage lengths
     (3.38–3.42)."""
-    section("Геометрия зарядов и сопел")
+    section("Геометрия зарядов и сопел", "(3.28) - (3.43)")
     beta_deg = int(round(math.degrees(BETA_C)))
     cot_beta = 1 / math.tan(BETA_C)
 
@@ -630,71 +591,6 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
                 "l_dk": l_dk, "l_a": l_a, "d_v": d_v, "l_dn": l_dn, "L": L,
             }
         )  # fmt: skip
-
-    # ---- Formula exposition (section text) ----
-    print("Найдем длины зарядов по формуле $(3.28)$:")
-    print("$ l_(з i) = overline(l_з i) d_(м i) $")
-    print()
-    print("Найдем длины щелей по формуле $(3.29)$:")
-    print("$ h_i = (0.37 overline(l_з i) - 0.30) d_(м i) $")
-    print()
-    print("Найдем площадь поверхности горения по формуле $(3.30)$:")
-    print("$ S_i = k_s overline(l_(з i)) d_(м i)^2 $")
-    print(f"где $k_s = 2.03 .. 3.4$. Возьмем $k_s = {K_S}$.")
-    print()
-    print("Найдем диаметр критического сечения по формуле $(3.31)$:")
-    print('$ d_("кр" i)^2 = (4 S (u rho_т) sqrt(R T))/(pi K_0 p_к n_с) $')
-    print(f"где $n_с = {N_NOZZLES}$ --- число сопел.")
-    print()
-    print("Найдем площадь критического сечения по формуле $(3.32)$:")
-    print('$ F_("кр" i) = (pi d_("кр" i)^2)/4 $')
-    print()
-    print("Найдем площадь среза сопла по формуле $(3.33)$:")
-    print('$ F_a = (F_(a)/F_("кр"))_i F_("кр" i) $')
-    print()
-    print("Найдем диаметр среза сопла по формуле $(3.34)$")
-    print("$ d_(a i) = sqrt((4 F_(a i))/pi) $")
-    print()
-    print("Найдем длину воспламенительного устройства по формуле $(3.35)$:")
-    print("$ l_(в i) = (0.1 .. 0.15) d_(м i) $")
-    print("Возьмем в качестве множителя $0.1$.")
-    print()
-    print("Найдем диаметр внутреннего канала по формуле $(3.36)$:")
-    print("$ d_(к i) = overline(d_(к i)) d_(з i) $")
-    print()
-    print("#pagebreak()")
-    print("Найдем диаметр заряда по формуле $(3.37)$:")
-    print('$ d_(з i) = d_(м i) - 2 delta_(к i) - 2 delta_("тз" i) $')
-    print(
-        'где $delta_(к i)$ --- толщина корпуса, а $delta_("тз" i)$ --- '
-        "толщина теплозащиты."
-    )
-    print(
-        "Толщину корпуса определим из условия прочности тонкостенной оболочки, "
-        "а толщину теплозащиты --- по графику $3.6$:"
-    )
-    print("$ delta_(к i) = (eta p_к d_(м i))/(2 sigma_в) $")
-    print()
-    print("Определим длину докритической части сопла по формуле $(3.38)$:")
-    print('$ l_("дк" i) = ((d_(к i) - d_("кр" i))/2) ctg(beta_(c i)) $')
-    print()
-    print("Определим длину закритической части сопла по формуле $(3.39)$:")
-    print('$ l_(a i) = ((d_(a i) - d_("кр" i))/2) ctg(beta_(c i)) $')
-    print()
-    print("Найдем диаметр воспламенительного устройства по формуле $(3.40)$:")
-    print("$ d_(в i) = (0.2..0.3) d_(м i) $")
-    print("Выберем значение $0.2$ в качестве коэффициента.")
-    print()
-    print("Найдем длину днищ по формуле $(3.41)$:")
-    print('$ l_("дн" i) approx 0.3 d_(м i) $')
-    print()
-    print('Примем выступы концевых рулей $h=0.2 "м"$.')
-    print()
-    print("Найдем длины ступеней по формуле $(3.42)$:")
-    print('$ L_i = l_(з i) + l_(а i) + l_("дк" i) + h + l_(в i) $')
-    print()
-    print("Проведем расчеты для всех ступеней по формулам $(3.28) - (3.42)$:")
-    print()
 
     # ---- Per-stage numeric results ----
     for i, g in enumerate(geo, 1):
@@ -793,13 +689,6 @@ def emit_geometry(weight: list[Weight], d_m: list[float]) -> None:
     print()
 
     # ---- Condition (3.43): d_м ≥ d_a (1 + √2) for 4-nozzle layout ----
-    print(
-        "Проверим, подходит ли диаметр срезов сопла в 4-сопловой конфигурации"
-        " под диаметры миделя по условию $(3.43)$:"
-    )
-    print()
-    print("$ d_(м i) >= d_(a i) (1+sqrt(2)) $")
-    print()
     factor = 1 + math.sqrt(2)
     for i, g in enumerate(geo, 1):
         d_mi = d_m[i - 1]

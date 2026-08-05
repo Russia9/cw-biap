@@ -14,9 +14,20 @@ def fmt(x):
     return str(int(x)) if x == int(x) else f"{x:g}"
 
 
-def section(title):
-    """Emit a comment separator marking a high-level output section."""
+def section(title, formulas):
+    """Open an output section: a comment separator plus the marker line naming
+    the formula range it covers, e.g.::
+
+        // ===== Геометрия зарядов и сопел =====
+
+        Проведем расчеты для всех ступеней по формулам $(3.28) - (3.43)$:
+
+    Only substituted calculations and tables follow — the symbolic formulas
+    themselves live in the report document, not in this output.
+    """
     print(f"// ===== {title} =====")
+    print()
+    print(f"Проведем расчеты для всех ступеней по формулам ${formulas}$:")
     print()
 
 
