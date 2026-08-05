@@ -818,16 +818,17 @@ def traj_stage_fields(thrust: list[Thrust], sub: Subrockets) -> list[dict]:
     the report tables quote so the document and the simulator agree digit for
     digit.
 
-    Note isp_sl is fed P_уд.р, the specific thrust at the *designed* exit
-    pressure p_a (0.70/0.37/0.14 bar), while traj/model.go interpolates it as a
-    true sea-level value. That mismatch is inherited from the report and is not
-    corrected here."""
+    isp_sl is P_уд.0, the specific thrust against sea-level back pressure,
+    which is what traj/model.go's pressure interpolation expects at its lower
+    anchor. Only stage 1 fires low enough for it to matter: the upper stages
+    ignite at 50 km and 171 km, where ambient is below 0.001 bar and the
+    interpolation returns essentially isp_vac regardless."""
     return [
         {
             "m0": round(sub.m0[i]),
             "m_fuel": round(sub.omega_z[i]),
             "burn_time": round(sub.dt[i], 1),
-            "isp_sl": round(thrust[i].P_ud_r, 3),
+            "isp_sl": round(thrust[i].P_ud_0, 3),
             "isp_vac": round(thrust[i].P_ud_v, 3),
             "dm": round(sub.d_m[i], 2),
         }

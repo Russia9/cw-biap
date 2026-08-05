@@ -19,14 +19,14 @@ const (
 // the next stage's M0 (or the payload mass after the last stage).
 //
 // Thrust altitude correction (§4.2): P(p) = Isp(p)*MassFlow()*G0, with Isp(p)
-// linear between sea level (IspSL = design impulse P_уд.р) and vacuum (IspVac =
+// linear between sea level (IspSL = ground impulse P_уд.0) and vacuum (IspVac =
 // P_уд.п). These two anchors reproduce main.py's launch and vacuum thrusts
-// exactly (e.g. stage 1: 694.8 kN and 750.6 kN).
+// exactly (e.g. stage 1: 707.1 kN and 763.9 kN).
 type Stage struct {
 	M0       float64 // sub-rocket launch mass [kg]
 	MFuel    float64 // propellant mass ω_з [kg]
 	BurnTime float64 // Δt_к [s]
-	IspSL    float64 // specific impulse at sea level (P_уд.р) [s]
+	IspSL    float64 // specific impulse at sea level (P_уд.0) [s]
 	IspVac   float64 // specific impulse in vacuum (P_уд.п) [s]
 	MotorDia float64 // motor diameter [m]
 	AeroPart string  // aerodynamic part key (see fallbacks in aero.go)
