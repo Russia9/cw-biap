@@ -474,13 +474,15 @@ def emit_masses(
         d_m.append(d)
 
     dt = [d_m[i] * (1 - D_K_BAR) / (2 * u[i] * 1e-3) for i in range(n)]
-    p_ud = [thrust[0].P_ud_r] + [thrust[i].P_ud_v for i in range(1, n)]
+    # Stage 1 is rated at ground level (subscript 0 in 3.23/3.26), the upper
+    # stages in vacuum (subscript п) — p_ud must follow lam_sub.
+    p_ud = [thrust[0].P_ud_0] + [thrust[i].P_ud_v for i in range(1, n)]
     lam_sub = ["0"] + ['"п"'] * (n - 1)
     lam = [dt[i] / (mu_k * p_ud[i]) for i in range(n)]
     p_m1 = 4 * m0[0] / (math.pi * d_m[0] ** 2)
     omega_z = [mu_k * m0[i] for i in range(n)]
     m_dot = [omega_z[i] / dt[i] for i in range(n)]
-    P_r1 = thrust[0].P_ud_r * G0 * m_dot[0]
+    P_r1 = thrust[0].P_ud_0 * G0 * m_dot[0]
     P_v = [thrust[i].P_ud_v * G0 * m_dot[i] for i in range(n)]
     l_k = [1.15 * weight[i].l_z * d_m[i] for i in range(n)]
 
@@ -525,7 +527,7 @@ def emit_masses(
         if i == 0:
             print(
                 eq(
-                    f"P_(0 1) = {thrust[0].P_ud_r:.2f} dot {G0} dot {omega_z[0]:.0f} / {dt[0]:.1f}"
+                    f"P_(0 1) = {thrust[0].P_ud_0:.2f} dot {G0} dot {omega_z[0]:.0f} / {dt[0]:.1f}"
                     f' = {P_r1 / 1000:.1f} "кН"'
                 )
             )
