@@ -52,6 +52,9 @@ var fallbacks = map[string][]string{
 	"all":      {"all"},
 }
 
+// aeroParts lists the keys of fallbacks in flight order, for reporting.
+var aeroParts = []string{"all", "stage2up", "stage3up", "head"}
+
 // LoadAero parses a CFD averages.csv into an AeroTable. Columns are located by
 // header name so added columns/rows are tolerated.
 func LoadAero(path string) (*AeroTable, error) {
@@ -131,12 +134,6 @@ func (a *AeroTable) resolve(part string) (*partTable, string) {
 		}
 	}
 	return nil, ""
-}
-
-// Has reports whether the requested part (or a fallback) has data.
-func (a *AeroTable) Has(part string) bool {
-	pt, _ := a.resolve(part)
-	return pt != nil
 }
 
 // Resolved returns which part key is actually used for a requested part.

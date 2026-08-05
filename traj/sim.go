@@ -93,8 +93,8 @@ func (r Rocket) simulateStage(at *AeroTable, st Stage, i int, t0, tEnd float64, 
 	if err != nil {
 		return nil, nil, err
 	}
-	rows := appendRows(nil, r, at, res, st.AeroPart, i+1, true, i > 0)
-	return rows, finalState(res, 5), nil
+	rows := appendRows(r, at, res, st.AeroPart, i+1, true, i > 0)
+	return rows, finalState(res), nil
 }
 
 // simulatePassive integrates the payload coast/re-entry from t0 to ground impact.
@@ -106,7 +106,7 @@ func (r Rocket) simulatePassive(at *AeroTable, t0 float64, state []float64, h fl
 	if err != nil {
 		return nil, err
 	}
-	return appendRows(nil, r, at, res, r.PayloadPart, 4, false, true), nil
+	return appendRows(r, at, res, r.PayloadPart, 4, false, true), nil
 }
 
 func stopAtTime(tEnd float64) func(x float64, y ...float64) (bool, bool) {
@@ -126,11 +126,11 @@ func stopGround(tMax float64) func(x float64, y ...float64) (bool, bool) {
 	}
 }
 
-// finalState extracts the last state vector (dimension d) from an RK result.
-func finalState(res [][]na.Point2D, d int) []float64 {
+// finalState extracts the last state vector from an RK result.
+func finalState(res [][]na.Point2D) []float64 {
 	last := len(res[0]) - 1
-	s := make([]float64, d)
-	for i := 0; i < d; i++ {
+	s := make([]float64, len(res))
+	for i := range res {
 		s[i] = res[i][last].Y
 	}
 	return s
@@ -138,7 +138,8 @@ func finalState(res [][]na.Point2D, d int) []float64 {
 
 // appendRows converts an RK result into trajectory rows. skipFirst drops the
 // leading step to avoid duplicating the time shared with the previous segment.
-func appendRows(rows []Row, r Rocket, at *AeroTable, res [][]na.Point2D, part string, stage int, active, skipFirst bool) []Row {
+func appendRows(r Rocket, at *AeroTable, res [][]na.Point2D, part string, stage int, active, skipFirst bool) []Row {
+	var rows []Row
 	d := len(res)
 	n := len(res[0])
 	y := make([]float64, d)
@@ -172,7 +173,7 @@ func rowFrom(r Rocket, at *AeroTable, t float64, y []float64, part string, stage
 		pit = r.Pitch.Theta(t)
 		om = r.Pitch.Rate(t)
 	} else {
-		pit = FlightAngle(y) // velocity-aligned payload ⇒ α=0
+		pit = theta // velocity-aligned payload ⇒ α=0
 		om = 0
 	}
 	X, Y, Mz := AeroForces(at, part, pit, y)
@@ -189,10 +190,15 @@ func surfaceRange(x, y float64) float64 {
 }
 
 func diagnose(r Rocket, rows []Row, tk []float64) Diagnostics {
-	const r2d = 180 / math.Pi
 	d := Diagnostics{}
-	d.PitchRateSep1 = math.Abs(r.Pitch.Rate(tk[0])) * r2d
-	d.PitchRateSep2 = math.Abs(r.Pitch.Rate(tk[1])) * r2d
+	// Separation rates are only defined where a staging event exists; a
+	// single-stage config has neither.
+	if len(tk) > 1 {
+		d.PitchRateSep1 = math.Abs(r.Pitch.Rate(tk[0])) * r2d
+	}
+	if len(tk) > 2 {
+		d.PitchRateSep2 = math.Abs(r.Pitch.Rate(tk[1])) * r2d
+	}
 
 	lastActive := len(r.Stages) // stage index of the final powered stage
 	crossedUp := false

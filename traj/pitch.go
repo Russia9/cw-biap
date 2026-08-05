@@ -43,36 +43,45 @@ type PitchProgram struct {
 	Segments []PitchSegment
 }
 
-// Theta returns the programmed pitch angle ϑ_пр(t) [rad].
+// segAt locates the arc covering t, returning it together with its entry angle
+// a and start time t0. ok is false during the vertical hold, past the last
+// segment, and when the program has no segments at all.
+func (p PitchProgram) segAt(t float64) (seg PitchSegment, a, t0 float64, ok bool) {
+	if t <= p.TVert {
+		return PitchSegment{}, 0, 0, false
+	}
+	a, t0 = math.Pi/2, p.TVert
+	for _, s := range p.Segments {
+		if t <= s.TEnd {
+			return s, a, t0, true
+		}
+		a, t0 = s.Theta, s.TEnd
+	}
+	return PitchSegment{}, 0, 0, false
+}
+
+// Theta returns the programmed pitch angle ϑ_пр(t) [rad]. Before the program it
+// holds 90° (the vertical hold); past it, the final segment's terminal angle.
 func (p PitchProgram) Theta(t float64) float64 {
-	if t <= p.TVert || len(p.Segments) == 0 {
+	seg, a, t0, ok := p.segAt(t)
+	if !ok {
+		if t > p.TVert && len(p.Segments) > 0 {
+			return p.Segments[len(p.Segments)-1].Theta
+		}
 		return math.Pi / 2
 	}
-	a, t0 := math.Pi/2, p.TVert
-	for _, seg := range p.Segments {
-		if t <= seg.TEnd {
-			return arcAt(seg.Shape, a, seg.Theta, t0, seg.TEnd, seg.K, t)
-		}
-		a, t0 = seg.Theta, seg.TEnd
-	}
-	return p.Segments[len(p.Segments)-1].Theta
+	return arcAt(seg.Shape, a, seg.Theta, t0, seg.TEnd, seg.K, t)
 }
 
 // Rate returns the programmed pitch rate ϑ̇_пр(t) [rad/s] as the analytical
 // derivative of the active arc (0 during the vertical hold, at cosine joints,
 // and past the program).
 func (p PitchProgram) Rate(t float64) float64 {
-	if t <= p.TVert || len(p.Segments) == 0 {
+	seg, a, t0, ok := p.segAt(t)
+	if !ok {
 		return 0
 	}
-	a, t0 := math.Pi/2, p.TVert
-	for _, seg := range p.Segments {
-		if t <= seg.TEnd {
-			return arcRate(seg.Shape, a, seg.Theta, t0, seg.TEnd, seg.K, t)
-		}
-		a, t0 = seg.Theta, seg.TEnd
-	}
-	return 0
+	return arcRate(seg.Shape, a, seg.Theta, t0, seg.TEnd, seg.K, t)
 }
 
 // Validate checks that the phase times are strictly increasing (TVert < TEnd_0 <

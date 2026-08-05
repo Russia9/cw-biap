@@ -28,7 +28,7 @@ type Stage struct {
 	BurnTime float64 // Δt_к [s]
 	IspSL    float64 // specific impulse at sea level (P_уд.0) [s]
 	IspVac   float64 // specific impulse in vacuum (P_уд.п) [s]
-	MotorDia float64 // motor diameter [m]
+	MotorDia float64 // motor diameter [m] — informational; see RrefAll below
 	AeroPart string  // aerodynamic part key (see fallbacks in aero.go)
 }
 
@@ -38,11 +38,15 @@ func (s Stage) MassFlow() float64 { return s.MFuel / s.BurnTime }
 const (
 	// Reference geometry shared by all aerodynamic coefficients, with the
 	// centre of rotation at the nose. Taken from the report geometry: RrefAll
-	// is half the stage-1 motor diameter d_(м 1) = 1.58 m (table 3.13), and
+	// is half the stage-1 motor diameter d_(м 1) = 1.59 m (table 3.13), and
 	// Lref is the full stack height, the sum of the stage lengths
-	// L = 7.72 + 4.33 + 2.85 m plus the payload section.
-	RrefAll = 0.79   // full-rocket max radius [m] -> Aref = π·0.79² = 1.96 m²
-	Lref    = 18.293 // full-rocket length [m]
+	// L = 7.79 + 4.35 + 2.86 m plus the 3.393 m payload section.
+	//
+	// These mirror main.py's output and must be refreshed alongside it — the
+	// Stage.MotorDia parsed from the config is not read anywhere, so nothing
+	// detects drift automatically.
+	RrefAll = 0.795  // full-rocket max radius [m] -> Aref = π·0.795² = 1.99 m²
+	Lref    = 22.393 // full-rocket length [m]
 )
 
 // Aref is the reference area for aerodynamic forces/moments [m²].
@@ -81,5 +85,8 @@ func (r Rocket) BurnoutTimes() []float64 {
 	}
 	return tk
 }
+
+// Angle conversions shared across the package.
+const r2d = 180 / math.Pi
 
 func deg(d float64) float64 { return d * math.Pi / 180 }

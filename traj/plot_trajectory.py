@@ -22,14 +22,17 @@ seps = df.loc[df["stage"].diff().fillna(0) != 0, "t"].tolist()
 
 # Powered (active, АУТ) vs passive (ПУТ) segments. The active leg is stages 1-3;
 # the passive leg is the payload coast + re-entry (stage 4).
-t_aut = df.loc[df["m"] <= df["m"].min() + 1.0, "t"].iloc[0]
 aut = df[df["stage"] <= 3]
 put = df[df["stage"] == 4]
+t_aut = aut["t"].max()  # end of the powered leg
 
 
-def marks(ax):
+def marks(ax, active=False):
+    """Draw the stage-separation lines; with `active`, also clip to the АУТ."""
     for t in seps:
         ax.axvline(t, color="0.7", lw=0.8, ls="--")
+    if active:
+        ax.set_xlim(0, t_aut)
 
 
 fig, ax = plt.subplots(4, 4, figsize=(20, 16))
@@ -76,26 +79,22 @@ ax[1, 2].legend()
 # Mass over the powered (active) segment only.
 ax[1, 3].plot(aut["t"], aut["m"] / 1000)
 ax[1, 3].set(xlabel="t, s", ylabel="m, t", title="Mass (АУТ)")
-marks(ax[1, 3])
-ax[1, 3].set_xlim(0, t_aut)
+marks(ax[1, 3], active=True)
 
 # Third row: angles, alpha, Mach and altitude over the powered (active) segment only.
 ax[2, 0].plot(aut["t"], aut["vartheta"], label="ϑ (pitch program)")
 ax[2, 0].plot(aut["t"], aut["theta"], label="θ (flight angle)")
 ax[2, 0].set(xlabel="t, s", ylabel="deg", title="Angles (АУТ)")
 ax[2, 0].legend()
-marks(ax[2, 0])
-ax[2, 0].set_xlim(0, t_aut)
+marks(ax[2, 0], active=True)
 
 ax[2, 1].plot(aut["t"], aut["Mach"])
 ax[2, 1].set(xlabel="t, s", ylabel="Mach", title="Mach (АУТ)")
-marks(ax[2, 1])
-ax[2, 1].set_xlim(0, t_aut)
+marks(ax[2, 1], active=True)
 
 ax[2, 2].plot(aut["t"], aut["H"] / 1000)
 ax[2, 2].set(xlabel="t, s", ylabel="H, km", title="Altitude (АУТ)")
-marks(ax[2, 2])
-ax[2, 2].set_xlim(0, t_aut)
+marks(ax[2, 2], active=True)
 
 ax[2, 3].plot(aut["t"], aut["alpha"])
 ax[2, 3].axhline(-10, color="0.7", lw=0.8, ls="--", label="α = -10°")
@@ -104,16 +103,14 @@ alpha_scale = aut.loc[aut["t"] > aut["t"].min(), "alpha"]
 alpha_limit = max(alpha_scale.abs().max(), 1.0) * 1.1
 ax[2, 3].set_ylim(-alpha_limit, alpha_limit)
 ax[2, 3].legend()
-marks(ax[2, 3])
-ax[2, 3].set_xlim(0, t_aut)
+marks(ax[2, 3], active=True)
 
 # Fourth row: aerodynamic forces (drag X, lift Y) on the active and passive legs.
 ax[3, 0].plot(aut["t"], aut["X"] / 1000, label="X (drag)")
 ax[3, 0].plot(aut["t"], aut["Y"] / 1000, label="Y (lift)")
 ax[3, 0].set(xlabel="t, s", ylabel="force, kN", title="Aero forces (АУТ)")
 ax[3, 0].legend()
-marks(ax[3, 0])
-ax[3, 0].set_xlim(0, t_aut)
+marks(ax[3, 0], active=True)
 
 ax[3, 1].plot(put["t"], put["X"] / 1000, label="X (drag)")
 ax[3, 1].plot(put["t"], put["Y"] / 1000, label="Y (lift)")

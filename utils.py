@@ -1,9 +1,15 @@
 import re
+from functools import cache
 
 import numpy as np
 import pandas as pd
 
 G0 = 9.80665  # m/s²
+
+# The loaders below are memoized on their path arguments: a single main.py run
+# would otherwise re-parse the same eight CSVs dozens of times inside the
+# per-stage loops. Everything they hand back must be treated as READ-ONLY —
+# mutating a returned frame, array or dict would corrupt the cache.
 
 
 def _norm_label(s: str) -> str:
@@ -15,6 +21,7 @@ def _norm_label(s: str) -> str:
         return s
 
 
+@cache
 def load_chart(path: str) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """Load a multi-curve digitized chart CSV.
 
@@ -54,29 +61,34 @@ def interp_chart_2d(path: str, x: float, y: float) -> float:
     return float(np.interp(y, label_vals, interped))
 
 
+@cache
+def _fuel_row(fuel, path):
+    return pd.read_csv(path).set_index("fuel").loc[fuel].to_dict()
+
+
+def fuel_props(fuel, path="assets/fuels.csv"):
+    """Return a dict of fuel properties from the CSV."""
+    return dict(_fuel_row(fuel, path))
+
+
 def burn_rate(fuel, p_k, path="assets/fuels.csv"):
     """Return (u, rho*u) for a fuel at chamber pressure p_k.
 
     The CSV's `u-p_k` column stores a law of the form `a*p_k^(n)`,
     so u(p_k) = a * p_k**n.
     """
-    row = pd.read_csv(path).set_index("fuel").loc[fuel]
+    props = fuel_props(fuel, path)
 
-    m = re.match(r"([\d.]+)\*p_k\^\(([\d.]+)\)", row["u-p_k"])
+    m = re.match(r"([\d.]+)\*p_k\^\(([\d.]+)\)", props["u-p_k"])
     if m is None:
-        raise ValueError(f"unrecognized burn-rate law for {fuel!r}: {row['u-p_k']!r}")
+        raise ValueError(f"unrecognized burn-rate law for {fuel!r}: {props['u-p_k']!r}")
     a, n = map(float, m.groups())
     u = a * p_k**n  # mm/s
-    return u, float(row["rho"]) * u / 1000  # rho [kg/m³] * u [mm/s] → kg/(m²·s)
+    return u, float(props["rho"]) * u / 1000  # rho [kg/m³] * u [mm/s] → kg/(m²·s)
 
 
 def alpha_dv(rho_u, l_z, path="assets/chart-4-26-alpha.csv"):
     return interp_chart_2d(path, rho_u, l_z)
-
-
-def fuel_props(fuel, path="assets/fuels.csv"):
-    """Return a dict of fuel properties from the CSV."""
-    return pd.read_csv(path).set_index("fuel").loc[fuel].to_dict()
 
 
 def specific_thrust_corrected(P_ud_st, al_pct):
@@ -126,18 +138,21 @@ def l_coefficient(rho_u, p_idx, path="assets/chart-4-27-l.csv"):
     return interp_chart(path, f"lambda_p{p_idx}", rho_u)
 
 
+@cache
 def k0_from_k(k, path="assets/table-k-k0.csv"):
     """Return K0 by linear interpolation from table 3.10."""
     df = pd.read_csv(path)
     return float(np.interp(k, df["k"].to_numpy(), df["K0"].to_numpy()))
 
 
+@cache
 def load_materials(path="assets/materials.csv"):
     """Return {id: value} of material properties from the materials table CSV."""
     df = pd.read_csv(path)
     return dict(zip(df["id"], df["value"].astype(float)))
 
 
+@cache
 def load_trajectory(path="assets/table-2.1.csv"):
     """Return the burnout-trajectory reference table (2.1) as a DataFrame.
 

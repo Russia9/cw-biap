@@ -4,12 +4,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 )
-
-const r2d = 180 / math.Pi
 
 // WriteCSV writes the trajectory as a semicolon-separated file (pandas sep=";").
 // Every `decimate`-th row is written (decimate<=1 writes all rows).
@@ -101,7 +98,7 @@ func PrintDiagnostics(d Diagnostics, lim Limits, at *AeroTable) {
 	fmt.Printf("  impact           : range=%.1f km at t=%.1f s\n", d.ImpactRange/1000, d.ImpactT)
 
 	// Note any aero parts served by a fallback (CFD case not present yet).
-	for _, p := range []string{"all", "stage2up", "stage3up", "head"} {
+	for _, p := range aeroParts {
 		if used := at.Resolved(p); used != "" && used != p {
 			fmt.Printf("  note: aero part %q not in data; using %q\n", p, used)
 		}

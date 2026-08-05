@@ -3,14 +3,17 @@
 Kept separate from utils.py (pure physics) so scripts share one rendering layer.
 """
 
+# Cell contents for a parameter that does not apply to a given stage.
+DASH = "$-$"
 
-def eq(body):
-    """Wrap a Typst math body in an unnumbered block equation."""
-    return f"#math.equation(numbering: none, block: true, $ {body} $)"
+
+def emit(body):
+    """Print a Typst math body as an unnumbered block equation."""
+    print(f"#math.equation(numbering: none, block: true, $ {body} $)")
 
 
 def fmt(x):
-    """Format a number: integer if whole, else up to 2 decimal places."""
+    """Format a number: integer if whole, else up to 6 significant digits."""
     return str(int(x)) if x == int(x) else f"{x:g}"
 
 
@@ -43,10 +46,19 @@ def param_row(label, values, spec=""):
     """Build one Typst parameter-table row: a label cell plus value cells.
 
     With `spec`, each value is formatted with it and wrapped in `$…$`; without
-    it, `values` are taken as already-formatted cell strings (e.g. ``"$-$"``).
+    it, `values` are taken as already-formatted cell strings (e.g. ``DASH``).
     """
     cells = [f"${v:{spec}}$" for v in values] if spec else list(values)
     return f"    [{label}], {', '.join(cells)},"
+
+
+def param_rows(entries, items):
+    """Build rows for `(label, spec, attr)` triples, reading `attr` off each
+    per-stage object in `items`."""
+    return [
+        param_row(label, [getattr(it, attr) for it in items], spec)
+        for label, spec, attr in entries
+    ]
 
 
 def param_table(rows, headers=("I ступень", "II ступень", "III ступень")):

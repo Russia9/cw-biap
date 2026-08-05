@@ -46,6 +46,8 @@ W_CON = 1.0e7
 CON_MARGIN = 1.0e-3
 W_MONO = 10.0
 W_TIME = 1000.0
+# Must mirror defaultKExp/defaultKCos in traj/pitch.go — the Go parser applies
+# these same defaults to arcs that leave "k" unset.
 DEFAULT_K_EXP = 3.0
 DEFAULT_K_COS = 1.1
 
@@ -87,41 +89,45 @@ def arc_specs() -> list[dict]:
     return specs
 
 
-def split_specs() -> list[dict]:
-    return [sp for sp in arc_specs() if not sp["is_final"]]
+# The arc layout is fixed by _BASE for the whole run, so resolve it once:
+# unpack_x() reads it on every objective evaluation.
+SPECS = arc_specs()
+SPLITS = [sp for sp in SPECS if not sp["is_final"]]
 
 
 def vector_dim() -> int:
-    n_arcs = len(arc_specs())
-    return n_arcs + 1 + len(split_specs()) + n_arcs
+    """Length of the CMA-ES vector: angles, t_в, non-final t_end values, ks."""
+    return 2 * len(SPECS) + 1 + len(SPLITS)
+
+
+def base_arc(sp: dict) -> dict:
+    return _BASE["stages"][sp["stage"]]["pitch"][sp["arc"]]
 
 
 def default_x0() -> list[float]:
-    specs = arc_specs()
-    splits = split_specs()
+    specs, splits = SPECS, SPLITS
     angles = []
     split_times = []
     ks = []
     for sp in specs:
-        arc = _BASE["stages"][sp["stage"]]["pitch"][sp["arc"]]
+        arc = base_arc(sp)
         angles.append(arc["theta_deg"])
         ks.append(arc_k(arc))
         if not sp["is_final"]:
-            split_times.append(arc.get("t_end", (sp["stage_start"] + sp["stage_end"]) / 2))
+            split_times.append(
+                arc.get("t_end", (sp["stage_start"] + sp["stage_end"]) / 2)
+            )
     if len(split_times) != len(splits):
         raise RuntimeError("internal optimizer layout mismatch")
     return [*angles, _BASE["t_vertical"], *split_times, *ks]
 
 
 def unpack_x(x):
-    specs = arc_specs()
-    splits = split_specs()
+    specs, splits = SPECS, SPLITS
     n_arcs = len(specs)
     n_splits = len(splits)
-    if len(x) != n_arcs + 1 + n_splits + n_arcs:
-        raise ValueError(
-            f"expected {n_arcs + 1 + n_splits + n_arcs} optimizer values, got {len(x)}"
-        )
+    if len(x) != vector_dim():
+        raise ValueError(f"expected {vector_dim()} optimizer values, got {len(x)}")
     angles = list(x[:n_arcs])
     t_vertical = float(x[n_arcs])
     split_times = list(x[n_arcs + 1 : n_arcs + 1 + n_splits])
@@ -130,8 +136,7 @@ def unpack_x(x):
 
 
 def config_from_x(x) -> dict:
-    """Map the CMA-ES vector onto a rocket config (arc shapes kept from base).
-    """
+    """Map the CMA-ES vector onto a rocket config (arc shapes kept from base)."""
     specs, splits, angles, t_vertical, split_times, ks = unpack_x(x)
     c = copy.deepcopy(_BASE)
     c["t_vertical"] = t_vertical
@@ -145,30 +150,22 @@ def config_from_x(x) -> dict:
 
 
 def k_lower_bounds() -> list[float]:
-    lows = []
-    for sp in arc_specs():
-        arc = _BASE["stages"][sp["stage"]]["pitch"][sp["arc"]]
-        lows.append(1.0 if arc_shape(arc) == "cos" else -8.0)
-    return lows
+    return [1.0 if arc_shape(base_arc(sp)) == "cos" else -8.0 for sp in SPECS]
 
 
 def bounds() -> list[list[float]]:
-    specs = arc_specs()
-    splits = split_specs()
-    n_arcs = len(specs)
-    angle_low = [5.0] * n_arcs
-    angle_high = [89.0] * n_arcs
-    split_low = [sp["stage_start"] + 1.0 for sp in splits]
-    split_high = [sp["stage_end"] - 0.1 for sp in splits]
+    n_arcs = len(SPECS)
+    split_low = [sp["stage_start"] + 1.0 for sp in SPLITS]
+    split_high = [sp["stage_end"] - 0.1 for sp in SPLITS]
     return [
-        [*angle_low, 5.0, *split_low, *k_lower_bounds()],
-        [*angle_high, 40.0, *split_high, *([8.0] * n_arcs)],
+        [*([5.0] * n_arcs), 5.0, *split_low, *k_lower_bounds()],
+        [*([89.0] * n_arcs), 40.0, *split_high, *([8.0] * n_arcs)],
     ]
 
 
 def cma_stds() -> list[float]:
-    n_arcs = len(arc_specs())
-    return [*([10.0] * n_arcs), 8.0, *([8.0] * len(split_specs())), *([3.0] * n_arcs)]
+    n_arcs = len(SPECS)
+    return [*([10.0] * n_arcs), 8.0, *([8.0] * len(SPLITS)), *([3.0] * n_arcs)]
 
 
 def end_times_from_x(x) -> list[float]:
@@ -183,7 +180,7 @@ def end_times_from_x(x) -> list[float]:
 
 
 def program_penalty(x) -> float:
-    specs, _splits, angles, t_vertical, _split_times, _ks = unpack_x(x)
+    _specs, _splits, angles, t_vertical, _split_times, _ks = unpack_x(x)
     ends = end_times_from_x(x)
     f = 0.0
 
@@ -207,7 +204,7 @@ def format_params(x) -> str:
     }
     lines = [f"t_в={t_vertical:.3f} s"]
     for sp, theta, k in zip(specs, angles, ks):
-        shape = arc_shape(_BASE["stages"][sp["stage"]]["pitch"][sp["arc"]])
+        shape = arc_shape(base_arc(sp))
         t_end = ""
         if not sp["is_final"]:
             t_end = f", t_end={split_by_ref[(sp['stage'], sp['arc'])]:.3f} s"
@@ -240,10 +237,7 @@ def metrics(x, h) -> dict:
 
 
 def objective(x, target_km, h) -> float:
-    try:
-        f_prog = program_penalty(x)
-    except ValueError:
-        return 1e9
+    f_prog = program_penalty(x)
     try:
         m = metrics(x, h)
     except (subprocess.CalledProcessError, json.JSONDecodeError, IndexError):
