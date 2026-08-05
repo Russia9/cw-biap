@@ -4,12 +4,12 @@
   "t_vertical": 12.676344901789616,
   "stages": [
     {
-      "m0": 31288,
-      "m_fuel": 20635,
-      "burn_time": 67.0,
+      "m0": 30591,
+      "m_fuel": 20175,
+      "burn_time": 66.5,
       "isp_sl": 225.7,
       "isp_vac": 252.747,
-      "dm": 1.59,
+      "dm": 1.58,
       "part": "all",
       "pitch": [
         {
@@ -26,12 +26,12 @@
       ]
     },
     {
-      "m0": 8842,
-      "m_fuel": 5832,
-      "burn_time": 43.3,
+      "m0": 8645,
+      "m_fuel": 5702,
+      "burn_time": 42.9,
       "isp_sl": 221.493,
       "isp_vac": 265.751,
-      "dm": 1.17,
+      "dm": 1.16,
       "part": "stage2up",
       "pitch": [
         {
@@ -42,12 +42,12 @@
       ]
     },
     {
-      "m0": 2497,
-      "m_fuel": 1647,
-      "burn_time": 31.0,
+      "m0": 2442,
+      "m_fuel": 1610,
+      "burn_time": 30.7,
       "isp_sl": 221.493,
       "isp_vac": 275.219,
-      "dm": 0.84,
+      "dm": 0.83,
       "part": "stage3up",
       "pitch": [
         {

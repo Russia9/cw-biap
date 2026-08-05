@@ -264,12 +264,11 @@ def calc_weights(i: int) -> Weight:
     K_tz = (p.delta_tz_mm * 1e-3) / s["d_m"]
 
     # (3.7) case and bottoms; η (safety factor) multiplies the mass
-    eta_37 = 1.6 if i == 3 else ETA
-    a = (math.pi / 2 * l_z + 1) * (p_k * 1e5 * RHO_M) / SIGMA_V * eta_37
+    a = (math.pi / 2 * l_z + 1) * (p_k * 1e5 * RHO_M) / SIGMA_V * ETA
     emit(
         f"a_{i} = (pi/2 dot {l_z:.1f} + 1)"
         f" dot ({fmt(p_k)} dot 10^5 dot {fmt(RHO_M)})"
-        f" / ({SIGMA_V / 1e6:.0f} dot 10^6) dot {eta_37}"
+        f" / ({SIGMA_V / 1e6:.0f} dot 10^6) dot {ETA}"
         f' = {a:.1f} "кг/м³"'
     )
 
