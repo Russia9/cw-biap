@@ -99,7 +99,7 @@ marks(ax[2, 2], active=True)
 ax[2, 3].plot(aut["t"], aut["alpha"])
 ax[2, 3].axhline(-10, color="0.7", lw=0.8, ls="--", label="α = -10°")
 ax[2, 3].set(xlabel="t, s", ylabel="α, deg", title="Alpha (АУТ)")
-alpha_scale = aut.loc[aut["t"] > aut["t"].min(), "alpha"]
+alpha_scale = aut.loc[aut["t"] > float(aut["t"].min()), "alpha"]
 alpha_limit = max(alpha_scale.abs().max(), 1.0) * 1.1
 ax[2, 3].set_ylim(-alpha_limit, alpha_limit)
 ax[2, 3].legend()
