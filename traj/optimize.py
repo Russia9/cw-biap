@@ -28,6 +28,10 @@ HERE = Path(__file__).parent
 BIN = HERE / "out" / "traj-sim"
 BASE_CONFIG = HERE / "rocket.json"
 
+# CFD coefficient table passed to every simulator call, set from --aero. Empty
+# means the simulator runs with zero aerodynamics, which is the default.
+AERO = ""
+
 # Objective weights. SCALE_L sets the range-error scale (km); a miss of SCALE_L
 # costs 1. W_CON makes any constraint violation dominate the range term.
 #
@@ -222,6 +226,8 @@ def run_sim(x, h, metrics=True, out=None):
         cfg_path = f.name
     try:
         cmd = [str(BIN), f"-config={cfg_path}", f"-h={h}"]
+        if AERO:
+            cmd.append(f"-aero={AERO}")
         if metrics:
             cmd.append("-metrics")
         if out is not None:
@@ -265,6 +271,11 @@ def main() -> None:
         "--sigma0", type=float, default=1.0, help="global CMA-ES step multiplier"
     )
     ap.add_argument("--seed", type=int, default=20260805, help="CMA-ES RNG seed")
+    ap.add_argument(
+        "--aero",
+        default="",
+        help="path to a CFD averages.csv (default: zero aerodynamics)",
+    )
     # Search and verification must use the same step: at h=0.5 the α peaks read
     # ~0.1 deg low, which is enough to make a solution that looks feasible
     # during the search violate the limits at h=0.1.
@@ -288,6 +299,14 @@ def main() -> None:
         ),
     )
     args = ap.parse_args()
+
+    global AERO
+    if args.aero:
+        if not Path(args.aero).exists():
+            raise SystemExit(f"aero table not found: {args.aero}")
+        # run_sim executes with cwd=HERE, so resolve before handing it over.
+        AERO = str(Path(args.aero).resolve())
+    print(f"aero: {AERO or 'ZERO (no table)'}")
 
     build()
 

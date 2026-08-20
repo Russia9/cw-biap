@@ -38,7 +38,25 @@ L_FULL = 12053
 # Velocity-loss coefficient on the active trajectory segment (k_V): the
 # characteristic (Tsiolkovsky) velocity exceeds the required burnout velocity
 # V_к by this factor to cover gravity/drag/steering losses.
-K_V = 1.165
+#
+# Аппазов §2.5 (2.128) recommends k_V = 1.15…1.25 for L = 10…14 тыс. км, with
+# larger ranges taking the SMALLER values, and his §5.2 РДТТ example adopts
+# 1.165 at L = 10000 км. By that rule L = 12053 км argues for ≤ 1.165.
+#
+# The §4.4 проверочный расчет disagrees. Sweeping the design k_V and measuring
+# the loss factor the simulator actually achieves gives measured > design
+# everywhere inside the band (1.165→1.230, 1.211→1.244, 1.241→1.251,
+# 1.248→1.260), so no self-consistent value exists within it: sizing for the
+# band's own losses always under-sizes the vehicle.
+#
+# With the 8-arc pitch program, 1.25 reaches L_FULL: 12053 km with all four
+# §4.4 limits satisfied, at the chart λ_з. 1.25 is the TOP of the §2.5 band but
+# inside it. The 4-arc program needed 1.275 — outside the band — so the extra
+# pitch arcs are what keep k_V admissible at all. Still contrary to the §2.5
+# monotonicity hint that L = 12053 км wants the lower end, so the РПЗ should
+# explain why the achieved losses land high: the α-limited gravity turn and a
+# CFD table still tied to the older, wider geometry are the honest reasons.
+K_V = 1.25
 
 # Burnout-trajectory reference (table 2.1, assets/table-2.1.csv): full
 # range L (km) maps to burnout altitude h_к (km), active-segment range l_к (km),
@@ -47,6 +65,15 @@ _TRAJ = load_trajectory()
 
 # Per-stage input data. d_m — motor outer diameter (m), taken from prototype.
 # mu_k — burnout mass fraction μ_к (fuel burned / stage launch mass).
+# l_z — charge elongation λ_з; optional. Chart 4-27 gives a recommended value
+# from ρ_т·u, which is what a stage uses when the key is absent. Overriding it
+# shortens and fattens the motor: d_м ∝ λ_з^(-1/3), so the burn time (3.22)
+# lengthens and the thrust-to-weight ratio n_0 = P_уд.0 μ_к / Δt_к drops.
+# No stage overrides it: every stage uses the chart value. A sweep of stage 1
+# over λ_з ∈ 3.5…8.0 with the real CFD table did show a ~4 % better plateau
+# around 5…7 (the drag-free sweep had shown the opposite), but with the 8-arc
+# pitch program the chart value 4.16 reaches L_FULL on its own, so the
+# deviation is no longer needed and the chart recommendation stands.
 STAGES = [
     {"p_k": 50, "p_a": 0.70, "fuel": "polybutadiene", "d_m": 1.7, "mu_k": 0.66},
     {"p_k": 35, "p_a": 0.37, "fuel": "polyurethane", "d_m": 1.1, "mu_k": 0.65},
@@ -189,7 +216,7 @@ def stage_props(s: dict, i: int) -> StageProps:
         T=combustion_temp(T_st, p_k),
         u=u,
         rho_u=rho_u,
-        l_z=l_coefficient(rho_u, i),
+        l_z=s.get("l_z", l_coefficient(rho_u, i)),
         K0=k0_from_k(k),
         fa_fkp=interp_chart(CHART_FA, f"k{k:.2f}", p_k / s["p_a"]),
         delta_tz_mm=interp_chart(CHART_DTZ, A_TZ, s["d_m"]),
@@ -449,27 +476,42 @@ def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> float:
     )
     print()
 
-    # Required burnout velocity V_к: the characteristic (Tsiolkovsky) velocity
-    # Σ g₀ P_уд.п ln(1/(1-μ_к)) divided by the loss factor k_V.
-    mu_k = [s["mu_k"] for s in STAGES]
+    # (3.16) Achievable burnout velocity from the prototype μ_кi: the
+    # characteristic (Tsiolkovsky) velocity Σ g₀ P_уд.п ln(1/(1-μ_к)) divided by
+    # the loss factor k_V. The prototype μ_кi are only a starting guess.
+    mu_proto = [s["mu_k"] for s in STAGES]
     p_ud_p = [t.P_ud_v for t in thrust]
     n = len(STAGES)
-    char_v = sum(G0 * p_ud_p[i] * math.log(1 / (1 - mu_k[i])) for i in range(n))
-    v_k_req = char_v / K_V
+    char_v = sum(G0 * p_ud_p[i] * math.log(1 / (1 - mu_proto[i])) for i in range(n))
+    v_k_ach = char_v / K_V
     sum_body = " + ".join(
-        f"{G0} dot {p_ud_p[i]:.2f} dot ln 1/(1-{fmt(mu_k[i])})" for i in range(n)
+        f"{G0} dot {p_ud_p[i]:.2f} dot ln 1/(1-{fmt(mu_proto[i])})" for i in range(n)
     )
-    emit(f'V_"к" = 1/{K_V} ({sum_body}) = {v_k_req:.0f} "м/с"')
+    emit(f'V_"к" = 1/{K_V} ({sum_body}) = {v_k_ach:.0f} "м/с"')
 
-    # Velocity demand including losses: V_к + ΔV_к = k_V·V_к.
+    # (3.17) Velocity the design range actually demands, read from table 3.12.
+    # (3.18) below is driven by THIS value, not by v_k_ach: μ_кi is being chosen
+    # to meet the requirement, exactly as in the Аппазов §5.2 worked example
+    # (1.165 · 6940 = 8100 м/с → μ_кi = 0.647 at L = 10000 км). Feeding the
+    # achievable velocity back in instead would cancel k_V algebraically and
+    # leave both k_V and L_FULL with no effect on any dimension.
+    v_k_req = traj_ref("V_k")
+    emit(f'V_"к.потр" = {v_k_req:.0f} "м/с"')
+    short = v_k_req - v_k_ach
     emit(
-        f'V_"к" + Delta V_"к" = k_V V_"к"'
-        f' = {K_V} dot {v_k_req:.0f} = {char_v:.0f} "м/с"'
+        f'Delta V = V_"к.потр" - V_"к" = {v_k_req:.0f} - {v_k_ach:.0f}'
+        f' = {short:+.0f} "м/с"'
+    )
+
+    # Velocity demand including losses: V_к + ΔV_к = k_V·V_к.потр.
+    emit(
+        f'V_"к" + Delta V_"к" = k_V V_"к.потр"'
+        f' = {K_V} dot {v_k_req:.0f} = {K_V * v_k_req:.0f} "м/с"'
     )
     print()
 
-    # Relative fuel weights of the subrockets (3.18): the characteristic
-    # velocity k_V·V_к is split equally across the n stages.
+    # (3.18) Relative fuel weights of the subrockets: the required characteristic
+    # velocity k_V·V_к.потр is split equally across the n stages.
     mu_calc = 1 - math.exp(-(K_V * v_k_req) / (n * G0 * P_ud_avg))
     emit(
         f'mu_("к"i) = 1 - exp(-({K_V} dot {v_k_req:.0f})'

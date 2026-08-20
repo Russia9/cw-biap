@@ -12,11 +12,12 @@ Coursework for BIAP (ballistic/thrust design of a solid-fuel three-stage rocket)
 uv run python main.py        # thrust/specific-impulse calculations → Typst math blocks
 uv run python preliminary.py # burn-rate and l_z/alpha_dv preliminary tables
 uv run python main.py --write-traj-config  # resync traj/rocket.json with main.py
+uv run pyright               # type-check all Python (standard mode)
 
 cd traj
 go build ./... && go test ./...            # build and test the simulator
-go run ./main -config=rocket.json          # → out/traj.csv + §4.4 diagnostics
-uv run python optimize.py                  # CMA-ES pitch program → out/best.json
+go run ./main -config=rocket.json -aero=../openfoam/results/averages.csv  # → out/traj.csv + §4.4 diagnostics
+uv run python optimize.py --aero ../openfoam/results/averages.csv  # CMA-ES pitch → out/best.json
 uv run python plot_trajectory.py           # charts from out/traj.csv
 ```
 
@@ -42,7 +43,11 @@ Go package `traj` (planar spherical-Earth RK4, GOST 4401-81 atmosphere, programm
 
 `main.py` is the single source of truth for the physical fields of `traj/rocket.json` — `payload_mass` and each stage's `m0`, `m_fuel`, `burn_time`, `isp_sl`, `isp_vac`, `dm`. Never hand-edit those; change `main.py` and run `--write-traj-config`. A bare `main.py` run warns on stderr when they drift. The `t_vertical`, `pitch` and `limits` fields are optimizer output and are preserved by the writer.
 
-**Aerodynamics are currently zeroed.** The CFD table was removed from the repo; `traj.ZeroAero()` supplies an empty coefficient table so drag, lift and pitch moment are all zero, and the force path in `model.go` is unchanged (it just multiplies by zero). Pass `-aero=<averages.csv>` to restore real coefficients. Dynamic pressure, Mach and angle of attack come from the atmosphere and kinematics, so the §4.4 constraints stay meaningful.
+**Aerodynamics come from `openfoam/results/averages.csv`** and must be passed explicitly: `-aero=<averages.csv>` for the simulator, `--aero=<averages.csv>` for `optimize.py`. Without the flag `traj.ZeroAero()` supplies an empty table and drag, lift and pitch moment are all zero — the force path in `model.go` is unchanged, it just multiplies by zero. The pitch program in `rocket.json` is optimized *with* the table, so a run without `-aero` will not reproduce the reported range.
+
+Aerodynamics are not a pure penalty here: lift is what turns the vehicle inside the §4.4 |α| limits. Restoring the table moved burnout from 35.8° to 28.5° and the range from 8118 to 8529 km, because the flatter climb saves more gravity loss than the drag costs.
+
+`Aref`/`Lref` in `config.go` (RrefAll = 0.795 m, Lref = 22.393 m) are the CFD run's reference geometry, not the current design's — d_м1 is now 1.53 m, so the table over-predicts both drag and lift by roughly 8 % until the CFD is re-run.
 
 ## Output format
 
