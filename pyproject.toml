@@ -11,3 +11,16 @@ dependencies = [
     "pandas>=3.0.3",
     "pandas-stubs>=3.0.3.260530",
 ]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+]
+
+[tool.pyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+include = ["main.py", "preliminary.py", "utils.py", "typst.py", "traj"]
+exclude = ["**/__pycache__", ".venv", "outcmaes", "traj/out", "openfoam"]

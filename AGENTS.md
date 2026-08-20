@@ -17,6 +17,7 @@ Trajectory layer under `traj/`: Go package `traj` (`sim.go` integration, `model.
 - `cd traj && go build ./... && go test ./...` builds and tests the simulator.
 - `cd traj && go run ./main -config=rocket.json` writes `out/traj.csv` and prints the §4.4 diagnostics.
 - `cd traj && uv run python optimize.py` tunes the pitch program and writes `out/best.json`.
+- `uv run pyright` type-checks every Python file (pyright, `standard` mode; configured in `pyproject.toml`).
 
 Aerodynamics are currently zeroed: the CFD table was removed, and the simulator runs drag-free unless `-aero=<averages.csv>` is supplied. See README.md.
 
@@ -26,7 +27,7 @@ Use Python 3.11 with 4-space indentation and clear type hints for shared helpers
 
 ## Testing Guidelines
 
-`traj/pitch_test.go` covers the pitch program; run it with `go test ./...`. There is no Python test suite. For changes to calculations, verify by running `uv run python main.py` and diffing the stdout against the previous output — it should change only where you intended. Sanity-check simulator results against expected ranges (burnout velocity, apogee, constraint margins) before reporting success.
+`traj/pitch_test.go` covers the pitch program; run it with `go test ./...`. There is no Python test suite; `uv run pyright` is the static check that stands in for one. For changes to calculations, verify by running `uv run python main.py` and diffing the stdout against the previous output — it should change only where you intended. Sanity-check simulator results against expected ranges (burnout velocity, apogee, constraint margins) before reporting success.
 
 ## Commit & Pull Request Guidelines
 
