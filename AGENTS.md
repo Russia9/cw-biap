@@ -10,6 +10,8 @@ Trajectory layer under `traj/`: Go package `traj` (`sim.go` integration, `model.
 
 `main.py` owns the physical fields of `traj/rocket.json`. Do not hand-edit masses, burn times, specific impulses or motor diameters there — change `main.py` and run `uv run python main.py --write-traj-config`. The pitch arcs, `t_vertical` and `limits` are optimizer output and must be preserved.
 
+`main.py` likewise owns `rocket-params.scad`, the generated dimension block that `rocket.scad` includes. Do not hand-edit it — change `main.py` and run `uv run python main.py --write-scad-params` (the Makefile does this for you). The CAD layer is `rocket.scad` (outer mold line only) plus the `Makefile`, which writes the four STLs the CFD meshes; `openfoam/` is the OpenFOAM case generator and sweep driver.
+
 ## Build, Test, and Development Commands
 
 - `uv run python main.py` prints the main Typst calculation output; add `--write-traj-config` to resync the simulator config.
@@ -19,7 +21,7 @@ Trajectory layer under `traj/`: Go package `traj` (`sim.go` integration, `model.
 - `cd traj && uv run python optimize.py` tunes the pitch program and writes `out/best.json`.
 - `uv run pyright` type-checks every Python file (pyright, `standard` mode; configured in `pyproject.toml`).
 
-Aerodynamics are currently zeroed: the CFD table was removed, and the simulator runs drag-free unless `-aero=<averages.csv>` is supplied. See README.md.
+Aerodynamics must be passed explicitly: `openfoam/results/averages.csv` is not loaded by default, and a drag-free run does not reproduce the reported result. See README.md.
 
 ## Coding Style & Naming Conventions
 

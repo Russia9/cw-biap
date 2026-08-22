@@ -63,6 +63,11 @@ RrefAll = 0.795 is now only +1.8 % off the true half-diameter, against
 Stage 3 remains 29 % narrower than what was meshed, so `stage3up` and `head`
 coefficients are the ones to redo.
 
+> **Resolved later.** This compared stage 3's *motor* diameter against the meshed
+> *outer* diameter. Per `archive.typ:636` stage 3 carries an external shell at
+> d_м2, which is what was meshed and what `rocket.scad` now models as `d_ext`.
+> At 1.16 m against the meshed 1.17 m, `stage3up` and `head` do not need redoing.
+
 ## Files
 
 - `rocket-29724.json` — drop-in `traj/rocket.json`

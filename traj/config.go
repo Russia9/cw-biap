@@ -37,16 +37,25 @@ func (s Stage) MassFlow() float64 { return s.MFuel / s.BurnTime }
 
 const (
 	// Reference geometry shared by all aerodynamic coefficients, with the
-	// centre of rotation at the nose. Taken from the report geometry: RrefAll
-	// is half the stage-1 motor diameter d_(м 1) = 1.59 m (table 3.13), and
-	// Lref is the full stack height, the sum of the stage lengths
-	// L = 7.79 + 4.35 + 2.86 m plus the 3.393 m payload section.
+	// centre of rotation at the nose. Both numbers are the bounding box of
+	// rocket.stl (PART="all") as openfoam/gen_case.py's stl_bbox() measures it.
+	// That is by construction the reference the CFD non-dimensionalised by:
+	// gen_case.py writes Aref = π·R_all², lRef = L_all and CofR = (0 0 0) into
+	// each case's constant/freestreamProperties from that same bounding box.
 	//
-	// These mirror main.py's output and must be refreshed alongside it — the
-	// Stage.MotorDia parsed from the config is not read anywhere, so nothing
-	// detects drift automatically.
-	RrefAll = 0.795  // full-rocket max radius [m] -> Aref = π·0.795² = 1.99 m²
-	Lref    = 22.393 // full-rocket length [m]
+	// Refresh after any change to main.py's d_(м i)/L_i or to rocket.scad:
+	//
+	//	make rocket.stl
+	//	uv run python -c "import sys; from pathlib import Path; \
+	//	  sys.path.insert(0,'openfoam'); from gen_case import stl_bbox; \
+	//	  print(stl_bbox(Path('rocket.stl')))"
+	//
+	// L_all is the 18.24 m stack height (sum L_i = 14.85 plus 3.39 m of
+	// payload and interstage section) plus the 3 mm eps overhang rocket.scad
+	// uses to fuse stacked sections into one solid. R_all is d_ext[0]/2 =
+	// d_(м 1)/2 = 1.58/2 — stage 1 sets the maximum diameter.
+	RrefAll = 0.79   // full-rocket max radius [m] -> Aref = π·0.79² = 1.9607 m²
+	Lref    = 18.243 // full-rocket length [m], nose tip to aft plane
 )
 
 // Aref is the reference area for aerodynamic forces/moments [m²].

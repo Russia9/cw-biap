@@ -25,7 +25,8 @@ uv run python main.py --write-traj-config
 
 That rewrites only the masses, burn times, specific impulses and motor
 diameters. The pitch program and limits in that file belong to the optimizer and
-are preserved.
+are preserved. `main.py --write-scad-params` does the same for the CAD geometry
+in `rocket-params.scad`.
 
 ## 2. Trajectory simulator (Go) and optimizer (Python)
 
@@ -40,11 +41,36 @@ uv run python optimize.py                  # tune the pitch program -> out/best.
 uv run python plot_trajectory.py           # charts from out/traj.csv
 ```
 
-### Aerodynamics are currently zeroed
+### Aerodynamics must be passed explicitly
 
-The CFD data set was removed from the repository, and the simulator runs with
-**no drag, lift or pitch moment** unless a coefficient table is supplied with
-`-aero=<path to averages.csv>`. Range figures are therefore optimistic by the
-drag loss (roughly 175 m/s of burnout velocity on the active leg). Dynamic
-pressure, Mach and angle of attack are still computed from the atmosphere and
-the kinematics, so the §4.4 constraints remain meaningful.
+The coefficient table lives in `openfoam/results/averages.csv` and is **not**
+loaded by default. Without `-aero` the simulator runs with no drag, lift or
+pitch moment, which does not reproduce the reported result — the pitch program
+was optimized with the table, and a drag-free run violates the §4.4 angle-of-attack
+limits. Always pass it:
+
+```bash
+go run ./main -config=rocket.json -aero=../openfoam/results/averages.csv
+uv run python optimize.py --aero ../openfoam/results/averages.csv
+```
+
+## 3. Geometry (OpenSCAD) and CFD (OpenFOAM)
+
+`rocket.scad` is the outer mold line — the surface the flow sees, with no motor
+internals or nozzles. Its dimensions come from `rocket-params.scad`, which
+`main.py` generates, so the drawing cannot drift from the report.
+
+```bash
+make stls        # rocket.stl, stage2up.stl, stage3up.stl, head.stl
+make png         # preview render
+```
+
+`openfoam/` turns those STLs into meshable OpenFOAM cases and sweeps them over
+Mach and angle of attack. Case generation needs only `make` and `openscad`;
+meshing and solving need OpenFOAM v2512 with the HiSA module. See
+`openfoam/README.md`.
+
+```bash
+uv run python openfoam/gen_case.py --part all --regime supersonic --Ma 4 --alpha 0
+uv run python openfoam/sweep.py --dry-run
+```

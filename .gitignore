@@ -231,3 +231,21 @@ traj/tmp*.json
 
 # CMA-ES scratch output, rewritten on every optimizer run.
 outcmaes/
+
+# Generated CAD meshes (regenerate via `make stls`). rocket-params.scad is
+# generated too but stays tracked: rocket.scad includes it, so a fresh clone
+# must be openable in OpenSCAD without running the generator first.
+*.stl
+
+# CFD: generated case directories and sweep bookkeeping. The per-case
+# convergence CSVs are regenerable from the case dirs; the aggregated
+# coefficient table is the only surviving result and stays tracked.
+openfoam/all/
+openfoam/stage2up/
+openfoam/stage3up/
+openfoam/head/
+openfoam/sweep_state.json
+openfoam/sweep_results.csv
+openfoam/sweep.log
+openfoam/results/*.csv
+!openfoam/results/averages.csv
