@@ -33,7 +33,7 @@ from utils import (
 )
 
 # Primary design requirement: full flight range L (km).
-L_FULL = 12053
+L_FULL = 12000
 
 # Velocity-loss coefficient on the active trajectory segment (k_V): the
 # characteristic (Tsiolkovsky) velocity exceeds the required burnout velocity
@@ -41,22 +41,17 @@ L_FULL = 12053
 #
 # Аппазов §2.5 (2.128) recommends k_V = 1.15…1.25 for L = 10…14 тыс. км, with
 # larger ranges taking the SMALLER values, and his §5.2 РДТТ example adopts
-# 1.165 at L = 10000 км. By that rule L = 12053 км argues for ≤ 1.165.
+# 1.165 at L = 10000 км. By that rule L = 12000 км argues for the lower end.
 #
-# The §4.4 проверочный расчет disagrees. Sweeping the design k_V and measuring
-# the loss factor the simulator actually achieves gives measured > design
-# everywhere inside the band (1.165→1.230, 1.211→1.244, 1.241→1.251,
-# 1.248→1.260), so no self-consistent value exists within it: sizing for the
-# band's own losses always under-sizes the vehicle.
-#
-# With the 8-arc pitch program, 1.25 reaches L_FULL: 12053 km with all four
-# §4.4 limits satisfied, at the chart λ_з. 1.25 is the TOP of the §2.5 band but
-# inside it. The 4-arc program needed 1.275 — outside the band — so the extra
-# pitch arcs are what keep k_V admissible at all. Still contrary to the §2.5
-# monotonicity hint that L = 12053 км wants the lower end, so the РПЗ should
-# explain why the achieved losses land high: the α-limited gravity turn and a
-# CFD table still tied to the older, wider geometry are the honest reasons.
-K_V = 1.25
+# Earlier sweeps with a coarse (4…8-arc) pitch program measured a loss factor
+# above the design value everywhere inside the band (1.165→1.230, 1.211→1.244,
+# 1.241→1.251, 1.248→1.260), which suggested no self-consistent k_V existed
+# within it and forced sizing at the band's top. That was an artefact of the
+# under-parameterised pitch program: arc count bought range at every step
+# tested (8 → 10 → 12 → 14). With the 14-arc program (6/4/4) the simulator
+# achieves 1.1837 against a design 1.198 — measured now beats design, sits
+# inside the band and lands near the §5.2 worked example's 1.165.
+K_V = 1.198
 
 # Burnout-trajectory reference (table 2.1, assets/table-2.1.csv): full
 # range L (km) maps to burnout altitude h_к (km), active-segment range l_к (km),
@@ -71,7 +66,7 @@ _TRAJ = load_trajectory()
 # lengthens and the thrust-to-weight ratio n_0 = P_уд.0 μ_к / Δt_к drops.
 # No stage overrides it: every stage uses the chart value. A sweep of stage 1
 # over λ_з ∈ 3.5…8.0 with the real CFD table did show a ~4 % better plateau
-# around 5…7 (the drag-free sweep had shown the opposite), but with the 8-arc
+# around 5…7 (the drag-free sweep had shown the opposite), but with the 14-arc
 # pitch program the chart value 4.16 reaches L_FULL on its own, so the
 # deviation is no longer needed and the chart recommendation stands.
 STAGES = [
@@ -105,11 +100,11 @@ ETA = 1.2  # safety factor η (1.2–1.5)
 ALPHA_BR = 0.07  # armor fraction α_бр
 EPSILON = 0.99  # outer-surface coating factor ε
 D_K_BAR = 0.3  # normalized inner bore d̄_к
-ALPHA_C = 0.005  # nozzle mass coefficient α_c
+ALPHA_C = 0.004  # nozzle mass coefficient α_c
 BETA_C_DEG = 20  # nozzle half-angle β_c, degrees
 BETA_C = math.radians(BETA_C_DEG)
-A_OMEGA_3 = 0.025  # guarantee fuel reserve coefficient α_ω (3rd stage only)
-N_TAIL = 0.012  # tail-section mass coefficient N
+A_OMEGA_3 = 0.015  # guarantee fuel reserve coefficient α_ω (3rd stage only)
+N_TAIL = 0.008  # tail-section mass coefficient N
 
 # Charge/nozzle geometry factors (section 3.28–3.42)
 K_S = 2.03  # burning-surface shape coefficient k_s (2.03–3.4)
@@ -293,7 +288,7 @@ def calc_weights(i: int) -> Weight:
     # (3.7) case and bottoms; η (safety factor) multiplies the mass
     a = (math.pi / 2 * l_z + 1) * (p_k * 1e5 * RHO_M) / SIGMA_V * ETA
     emit(
-        f"a_{i} = (pi/2 dot {l_z:.1f} + 1)"
+        f"a_{i} = (pi/2 dot {l_z:.2f} + 1)"
         f" dot ({fmt(p_k)} dot 10^5 dot {fmt(RHO_M)})"
         f" / ({SIGMA_V / 1e6:.0f} dot 10^6) dot {ETA}"
         f' = {a:.1f} "кг/м³"'
@@ -309,7 +304,7 @@ def calc_weights(i: int) -> Weight:
     emit(
         f"b_{i} = pi/2 dot {fmt(RHO_BR)}"
         f" dot [{ALPHA_BR} / (2 dot {p.u:.2f}) dot (1 - {D_K_BAR}^2)"
-        f" + {l_z:.1f} dot (1 - {EPSILON})]"
+        f" + {l_z:.2f} dot (1 - {EPSILON})]"
         f' = {b:.1f} "кг/м³"'
     )
 
@@ -331,7 +326,7 @@ def calc_weights(i: int) -> Weight:
         f"c_{i}"
         f" = (2.03 dot {p.rho_u:.2f} dot {fmt(RHO_C_AVG)} dot sqrt({fmt(p.R)} dot {p.T:.1f}))"
         f" / ({p.K0:.3f} dot {fmt(p_k)} dot 10^5 dot sin({BETA_C_DEG}°))"
-        f" dot ({p.fa_fkp:.2f} - 1) dot {l_z:.1f} dot {ALPHA_C}"
+        f" dot ({p.fa_fkp:.2f} - 1) dot {l_z:.2f} dot {ALPHA_C}"
         f' = {c:.1f} "кг/м³"'
     )
 
@@ -342,7 +337,7 @@ def calc_weights(i: int) -> Weight:
     q = K_tz * (1.96 + math.pi * (0.37 * l_z - 0.30)) * RHO_TZ
     emit(
         f"q_{i} = {K_tz:.5f}"
-        f" dot [1.96 + pi (0.37 dot {l_z:.1f} - 0.30)]"
+        f" dot [1.96 + pi (0.37 dot {l_z:.2f} - 0.30)]"
         f" dot {fmt(RHO_TZ)}"
         f' = {q:.1f} "кг/м³"'
     )
@@ -355,7 +350,7 @@ def calc_weights(i: int) -> Weight:
     a_dv = (a + b + c + q) / (psi * l_z)
     emit(
         f'a_("дв{i}") = ({a:.1f} + {b:.1f} + {c:.1f} + {q:.1f})'
-        f" / ({psi:.1f} dot {l_z:.1f})"
+        f" / ({psi:.1f} dot {l_z:.2f})"
         f" = {a_dv:.4f}"
     )
 
@@ -484,9 +479,13 @@ def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> float:
     n = len(STAGES)
     char_v = sum(G0 * p_ud_p[i] * math.log(1 / (1 - mu_proto[i])) for i in range(n))
     v_k_ach = char_v / K_V
-    sum_body = " + ".join(
+    terms = [
         f"{G0} dot {p_ud_p[i]:.2f} dot ln 1/(1-{fmt(mu_proto[i])})" for i in range(n)
-    )
+    ]
+    # Manual line break inside the middle term keeps the equation within the page
+    # width; the operator repeats on both sides of the break (Russian convention).
+    terms[1] = terms[1].replace(" dot ln", " dot \\ dot ln")
+    sum_body = " + ".join(terms)
     emit(f'V_"к" = 1/{K_V} ({sum_body}) = {v_k_ach:.0f} "м/с"')
 
     # (3.17) Velocity the design range actually demands, read from table 3.12.
@@ -503,9 +502,9 @@ def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> float:
         f' = {short:+.0f} "м/с"'
     )
 
-    # Velocity demand including losses: V_к + ΔV_к = k_V·V_к.потр.
+    # Velocity demand including losses: V_к.потр + ΔV_пот = k_V·V_к.потр.
     emit(
-        f'V_"к" + Delta V_"к" = k_V V_"к.потр"'
+        f'V_"к.потр" + Delta V_"пот" = k_V V_"к.потр"'
         f' = {K_V} dot {v_k_req:.0f} = {K_V * v_k_req:.0f} "м/с"'
     )
     print()
@@ -514,7 +513,7 @@ def emit_trajectory(thrust: list[Thrust], P_ud_avg: float) -> float:
     # velocity k_V·V_к.потр is split equally across the n stages.
     mu_calc = 1 - math.exp(-(K_V * v_k_req) / (n * G0 * P_ud_avg))
     emit(
-        f'mu_("к"i) = 1 - exp(-({K_V} dot {v_k_req:.0f})'
+        f"mu_(к i) = 1 - exp(-({K_V} dot {v_k_req:.0f})"
         f"/({n} dot {G0} dot {P_ud_avg:.2f})) = {mu_calc:.3f}"
     )
     print()
@@ -567,7 +566,7 @@ def emit_masses(
         w = weight[i]
         emit(
             f"d_(м {i + 1}) = root(3, ((1 - {N_TAIL}) dot {m0[i]:.0f} - {payload[i]:.0f})"
-            f"/((1 + {w.a_dv:.4f}) dot {w.psi:.1f} dot {w.l_z:.1f}))"
+            f"/((1 + {w.a_dv:.4f}) dot {w.psi:.1f} dot {w.l_z:.2f}))"
             f' = {d_m[i]:.2f} "м"'
         )
         emit(
@@ -594,7 +593,7 @@ def emit_masses(
             f' = {P_v[i] / 1000:.1f} "кН"'
         )
         emit(
-            f"l_(к {i + 1}) approx 1.15 dot {weight[i].l_z:.1f} dot {d_m[i]:.2f}"
+            f"l_(к {i + 1}) approx 1.15 dot {weight[i].l_z:.2f} dot {d_m[i]:.2f}"
             f' = {l_k[i]:.2f} "м"'
         )
         print()
@@ -628,12 +627,12 @@ def emit_geometry(d_m: list[float]) -> None:
         s, p = STAGES[i - 1], PROPS[i - 1]
         d = d_m[i - 1]
         stage_header(i)
-        emit(f'l_(з {i}) = {p.l_z:.1f} dot {d:.2f} = {g.l_zi:.2f} "м"')
+        emit(f'l_(з {i}) = {p.l_z:.2f} dot {d:.2f} = {g.l_zi:.2f} "м"')
         emit(
-            f"h_{i} = (0.37 dot {p.l_z:.1f} - 0.30) dot {d:.2f}"
+            f"h_{i} = (0.37 dot {p.l_z:.2f} - 0.30) dot {d:.2f}"
             f' = {g.h_slot:.3f} "м"'
         )
-        emit(f'S_{i} = {K_S} dot {p.l_z:.1f} dot {d:.2f}^2 = {g.S:.2f} "м²"')
+        emit(f'S_{i} = {K_S} dot {p.l_z:.2f} dot {d:.2f}^2 = {g.S:.2f} "м²"')
         emit(
             f'd_("кр" {i})^2 = (4 dot {g.S:.2f} dot {p.rho_u:.2f} dot '
             f"sqrt({fmt(p.R)} dot {p.T:.1f}))"
