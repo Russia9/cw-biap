@@ -114,17 +114,17 @@ func (r Rocket) simulatePassive(at *AeroTable, t0 float64, state []float64, h fl
 // past the horizon keeps integrating underground for the rest of the burn and
 // hands the passive leg a sub-surface initial state, which its ground-stop
 // bisection cannot resolve. H is exactly 0 at lift-off, so the test is strict.
-func stopAtTime(tEnd float64) func(x float64, y ...float64) (bool, bool) {
-	return func(x float64, y ...float64) (bool, bool) {
-		done := x >= tEnd-1e-9 || Altitude(y) < 0
+func stopAtTime(tEnd float64) func(t float64, y ...float64) (bool, bool) {
+	return func(t float64, y ...float64) (bool, bool) {
+		done := t >= tEnd-1e-9 || Altitude(y) < 0
 		return done, done
 	}
 }
 
-func stopGround(tMax float64) func(x float64, y ...float64) (bool, bool) {
-	return func(x float64, y ...float64) (bool, bool) {
+func stopGround(tMax float64) func(t float64, y ...float64) (bool, bool) {
+	return func(t float64, y ...float64) (bool, bool) {
 		H := Altitude(y)
-		if x >= tMax {
+		if t >= tMax {
 			return true, true
 		}
 		return H <= 0, H <= 0 && math.Abs(H) < 1.0

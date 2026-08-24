@@ -1,14 +1,29 @@
 package traj
 
-import "math"
+import (
+	"math"
+
+	"traj/atmosphere"
+)
 
 // Physical constants (central-gravity, non-rotating spherical Earth — §4.1/§4.2).
+//
+// Two deliberate convention splits, flagged in the physics audit:
+//   - Rz is the mean Earth radius used by the dynamics; the atmosphere package
+//     internally uses the GOST geopotential radius 6 356 767 m. The 14 km gap
+//     only enters the geopotential conversion (sub-metre effect on H').
+//   - G0 appears solely in the Isp→thrust conversion, because specific impulse
+//     in seconds is defined against standard gravity. Surface gravity in the
+//     model itself is MuZ/Rz² ≈ 9.820 m/s².
 const (
-	Rz   = 6371000.0 // Earth radius [m]
-	MuZ  = 3.986e14  // Earth gravitational parameter [m^3/s^2]
-	G0   = 9.80665   // standard gravity [m/s^2]
-	P0   = 101325.0  // sea-level pressure [Pa]
-	Hatm = 94000.0   // conditional atmosphere boundary [m]
+	Rz  = 6371000.0 // Earth radius [m]
+	MuZ = 3.986e14  // Earth gravitational parameter [m^3/s^2]
+	G0  = 9.80665   // standard gravity [m/s^2]
+	P0  = 101325.0  // sea-level pressure [Pa]
+	// Hatm is the conditional atmosphere boundary [m], above which the
+	// atmosphere model returns vacuum — the same boundary the §4.4 crossing
+	// diagnostics report against.
+	Hatm = atmosphere.HBoundary
 )
 
 const (

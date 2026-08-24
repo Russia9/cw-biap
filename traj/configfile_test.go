@@ -14,7 +14,7 @@ func TestDefaultConfigParses(t *testing.T) {
 	if r.Payload <= 0 || r.PayloadPart == "" {
 		t.Errorf("payload = %v %q, want positive mass and a part key", r.Payload, r.PayloadPart)
 	}
-	if lim.Eps1 <= 0 || lim.Eps2 <= 0 || lim.ThetaDotMax <= 0 || lim.Qmax <= 0 {
+	if lim.Eps1 <= 0 || lim.Eps2 <= 0 || lim.PitchRateMax <= 0 || lim.Qmax <= 0 {
 		t.Errorf("limits not populated: %+v", lim)
 	}
 	if err := r.Pitch.Validate(); err != nil {

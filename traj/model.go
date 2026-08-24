@@ -78,12 +78,12 @@ func aeroForcesWith(at *AeroTable, part string, pitch float64, y []float64, rho,
 }
 
 // activeAccel returns the translational acceleration (ax, ay) on the powered leg
-// at time x and state y: programmed pitch ϑ_пр(x), thrust, aerodynamics (whose
+// at time t and state y: programmed pitch ϑ_пр(t), thrust, aerodynamics (whose
 // magnitude follows ρ(H), so the atmosphere/vacuum split is automatic) and
 // gravity. Shared by the dVx/dVy components so both read the same forces.
-func (r Rocket) activeAccel(st Stage, at *AeroTable, x float64, y []float64) (ax, ay float64) {
+func (r Rocket) activeAccel(st Stage, at *AeroTable, t float64, y []float64) (ax, ay float64) {
 	th := FlightAngle(y)
-	pit := r.Pitch.Cmd(x, th)
+	pit := r.Pitch.Cmd(t, th)
 	_, rho, p, _, _, a := atmosphere.Atmosphere(Altitude(y))
 	X, Y, _ := aeroForcesWith(at, st.AeroPart, pit, y, rho, a)
 	P := thrustWith(st, p)
@@ -135,17 +135,17 @@ func (c *accelCache) store(t float64, y []float64, ax, ay float64) {
 func (r Rocket) activeSystem(st Stage, at *AeroTable) na.FuncSystem {
 	mdot := st.MassFlow()
 	var c accelCache
-	accel := func(x float64, y []float64) (float64, float64) {
-		if c.hit(x, y) {
+	accel := func(t float64, y []float64) (float64, float64) {
+		if c.hit(t, y) {
 			return c.ax, c.ay
 		}
-		ax, ay := r.activeAccel(st, at, x, y)
-		c.store(x, y, ax, ay)
+		ax, ay := r.activeAccel(st, at, t, y)
+		c.store(t, y, ax, ay)
 		return ax, ay
 	}
 	return na.FuncSystem{
-		func(_ bool, x float64, y ...float64) float64 { ax, _ := accel(x, y); return ax },
-		func(_ bool, x float64, y ...float64) float64 { _, ay := accel(x, y); return ay },
+		func(_ bool, t float64, y ...float64) float64 { ax, _ := accel(t, y); return ax },
+		func(_ bool, t float64, y ...float64) float64 { _, ay := accel(t, y); return ay },
 		func(_ bool, _ float64, y ...float64) float64 { return y[iVx] }, // dx/dt
 		func(_ bool, _ float64, y ...float64) float64 { return y[iVy] }, // dy/dt
 		func(_ bool, _ float64, _ ...float64) float64 { return -mdot },  // dm/dt
@@ -172,17 +172,17 @@ func (r Rocket) passiveAccel(at *AeroTable, y []float64) (ax, ay float64) {
 // does not depend on time, but keying the cache on t as well stays correct.
 func (r Rocket) passiveSystem(at *AeroTable) na.FuncSystem {
 	var c accelCache
-	accel := func(x float64, y []float64) (float64, float64) {
-		if c.hit(x, y) {
+	accel := func(t float64, y []float64) (float64, float64) {
+		if c.hit(t, y) {
 			return c.ax, c.ay
 		}
 		ax, ay := r.passiveAccel(at, y)
-		c.store(x, y, ax, ay)
+		c.store(t, y, ax, ay)
 		return ax, ay
 	}
 	return na.FuncSystem{
-		func(_ bool, x float64, y ...float64) float64 { ax, _ := accel(x, y); return ax },
-		func(_ bool, x float64, y ...float64) float64 { _, ay := accel(x, y); return ay },
+		func(_ bool, t float64, y ...float64) float64 { ax, _ := accel(t, y); return ax },
+		func(_ bool, t float64, y ...float64) float64 { _, ay := accel(t, y); return ay },
 		func(_ bool, _ float64, y ...float64) float64 { return y[iVx] }, // dx/dt
 		func(_ bool, _ float64, y ...float64) float64 { return y[iVy] }, // dy/dt
 		func(_ bool, _ float64, _ ...float64) float64 { return 0 },      // dm/dt
