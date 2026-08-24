@@ -229,6 +229,7 @@ traj/out/traj.csv
 traj/tmp*.json
 # Refactor byte-gate baseline: machine-local captures, never shared.
 traj/golden/
+traj/out/gate*
 *.png
 
 # CMA-ES scratch output, rewritten on every optimizer run.
