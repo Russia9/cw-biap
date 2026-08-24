@@ -227,6 +227,8 @@ __marimo__/
 traj/out/traj-sim
 traj/out/traj.csv
 traj/tmp*.json
+# Refactor byte-gate baseline: machine-local captures, never shared.
+traj/golden/
 *.png
 
 # CMA-ES scratch output, rewritten on every optimizer run.
