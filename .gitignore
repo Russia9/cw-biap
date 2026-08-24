@@ -222,14 +222,14 @@ __marimo__/
 # macOS
 .DS_Store
 
-# Trajectory simulator: compiled binary and regenerable run output.
-# traj/out/best.json is the actual result and stays tracked.
-traj/out/traj-sim
-traj/out/traj.csv
+# Trajectory simulator: everything under traj/out/ is regenerable output
+# (optimizer results, trajectory CSVs, logs, binaries). The live design is
+# traj/rocket.json; promote an optimizer winner by copying its t_vertical and
+# per-stage pitch arrays there.
+traj/out/
 traj/tmp*.json
 # Refactor byte-gate baseline: machine-local captures, never shared.
 traj/golden/
-traj/out/gate*
 *.png
 
 # CMA-ES scratch output, rewritten on every optimizer run.
