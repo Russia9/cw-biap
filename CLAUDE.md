@@ -66,9 +66,9 @@ Four layers on the Python side:
 
 ## Trajectory layer (`traj/`)
 
-Go package `traj` — planar spherical-Earth RK4 (`sim.go` integration, `model.go` equations of motion, `pitch.go` programmed pitch, `aero.go` coefficient tables, `config.go`/`configfile.go` config, `output.go` CSV + diagnostics), GOST 4401-81 atmosphere in `atmosphere/`, CLI in `main/`, plus `optimize.py` (CMA-ES) and `plot_trajectory.py`.
+Go package `traj` — planar spherical-Earth RK4 (`sim.go` integration driver, `model.go` equations of motion, `pitch.go` programmed pitch, `aero.go` coefficient tables, `constants.go`/`rocket.go` constants and config types, `configfile.go` JSON parsing, `row.go` trajectory rows, `diagnostics.go` §4.4 measurement, `output.go` CSV/metrics/diagnostics printing), GOST 4401-81 atmosphere in `atmosphere/`, CLI in `main/`, plus `optimize.py` (CMA-ES) and `plot_trajectory.py`. Simulator behavior is pinned by golden tests (`sim_test.go`, `atmosphere_test.go`): a refactor must keep them byte-exact, and a deliberate physics change updates the pins in the same commit with the delta recorded.
 
-The model is 3-DOF with a **programmed** pitch angle: `AeroForces` returns a pitch moment `Mz`, but `activeAccel` discards it (`model.go:81`) — `Mz` only reaches the CSV and diagnostics. Consequently `Lref` in `config.go` scales nothing that affects the trajectory.
+The model is 3-DOF with a **programmed** pitch angle: `AeroForces` returns a pitch moment `Mz`, but `activeAccel` discards it — `Mz` only reaches the CSV and diagnostics. Consequently `Lref` in `constants.go` scales nothing that affects the trajectory.
 
 ### `main.py` owns the physical fields of `rocket.json`
 
@@ -84,13 +84,13 @@ The pitch program in `rocket.json` was optimized *with* the table, so a drag-fre
 
 The pitch program was optimized flat against the constraints, so there is no robustness margin except on q (76 kPa of 120 kPa). Any change to masses, impulses, the aero table or the reference area makes it infeasible rather than merely suboptimal. Re-run `optimize.py` and check the diagnostics before reporting a result.
 
-**Currently both |α| limits are exceeded**: 1.5013° against 1.50 subsonic and 10.036° against 10.00 supersonic, at 12 427 km. This surfaced when `RrefAll` was corrected from 0.795 to the CFD's actual 0.79 — the old value inflated `Aref` by 1.25 %, and the extra lift was holding α inside the limits. The violation is therefore pre-existing and was masked by the wrong reference area, not introduced by it. Fixing it means re-optimizing the pitch program (warm-started from `rocket.json`, `--maxiter` ≥ 1500, several seeds).
+**Currently four §4.4 checks read EXCEEDS** at 12 427 km: both |α| limits (1.5013° vs 1.50 subsonic, 10.036° vs 10.00 supersonic), the finite-difference pitch rate (3.03 vs 3.00 °/s), and the apogee (1897.7 vs 1800 km). The α pair surfaced when `RrefAll` was corrected from 0.795 to the CFD's actual 0.79 — the old value inflated `Aref` by 1.25 %, and the extra lift was holding α inside the limits; the violations are pre-existing, not introduced by the correction. Fixing them means re-optimizing the pitch program (warm-started from `rocket.json`, `--maxiter` ≥ 1500, several seeds).
 
 ### Optimizer loop is not automatic
 
-`optimize.py` builds `out/traj-sim`, searches, and writes the winner to **`out/best.json`** — it never writes `rocket.json`. Promoting a result means copying `t_vertical` and the per-stage `pitch` arrays from `out/best.json` into `traj/rocket.json` yourself. Settings that mattered on this landscape: `--maxiter` ≥ 1500 (the 150 default is severely under-converged), best-of-N over several seeds, and keeping `--h-opt` equal to `--h-final` at 0.1 s — at h = 0.5 the α peaks read ~0.1° low, enough to make an infeasible solution look feasible during the search.
+`optimize.py` builds a per-run simulator binary under `out/` (removed on exit; concurrent seed runs are safe), searches, and writes the winner to **`out/best.json`** — it never writes `rocket.json`. The CMA-ES state is checkpointed to `out/<stem>-cma.pkl` every 10 iterations; `--resume <pkl>` continues an interrupted or finished search (pass a larger `--maxiter` to extend). Promoting a result means copying `t_vertical` and the per-stage `pitch` arrays from `out/best.json` into `traj/rocket.json` yourself (`out/` is untracked — regenerable output). Settings that mattered on this landscape: `--maxiter` ≥ 1500 (the 150 default is severely under-converged), best-of-N over several seeds, and keeping `--h-opt` equal to `--h-final` at 0.1 s — at h = 0.5 the α peaks read ~0.1° low, enough to make an infeasible solution look feasible during the search.
 
-### Reference geometry in `config.go`
+### Reference geometry in `constants.go`
 
 `RrefAll = 0.79` and `Lref = 18.243` are the bounding box of `rocket.stl`, measured with `openfoam/gen_case.py`'s `stl_bbox()` — the same function that writes `Aref`/`lRef` into each CFD case, so the simulator and the coefficients share one reference by construction. Refresh both after any change to `main.py`'s d_(м i)/L_i or to `rocket.scad`; the recipe is in the comment there.
 
