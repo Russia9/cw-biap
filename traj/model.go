@@ -99,12 +99,46 @@ func thetaDot(y []float64, ax, ay float64) float64 {
 	return (y[iVx]*ay - y[iVy]*ax) / v2
 }
 
+// accelCache memoizes one (t, state) → (ax, ay) evaluation. The RK library
+// evaluates every ODE component as its own closure, handing the dVx and dVy
+// components of one stage evaluation identical inputs — so without the cache
+// the shared acceleration (atmosphere, aero table, thrust, gravity) would be
+// computed twice per RK stage. A hit returns the float64s the identical code
+// path already produced, so caching cannot change a single output bit. A NaN
+// state never matches itself and simply recomputes.
+type accelCache struct {
+	ok     bool
+	t      float64
+	y      [5]float64
+	ax, ay float64
+}
+
+func (c *accelCache) hit(t float64, y []float64) bool {
+	return c.ok && c.t == t && c.y == [5]float64{y[0], y[1], y[2], y[3], y[4]}
+}
+
+func (c *accelCache) store(t float64, y []float64, ax, ay float64) {
+	c.t, c.y = t, [5]float64{y[0], y[1], y[2], y[3], y[4]}
+	c.ax, c.ay = ax, ay
+	c.ok = true
+}
+
 // activeSystem builds the powered-flight ODE system for one stage (5 states).
+// The returned system shares one accelCache and is not safe for concurrent use.
 func (r Rocket) activeSystem(st Stage, at *AeroTable) na.FuncSystem {
 	mdot := st.MassFlow()
+	var c accelCache
+	accel := func(x float64, y []float64) (float64, float64) {
+		if c.hit(x, y) {
+			return c.ax, c.ay
+		}
+		ax, ay := r.activeAccel(st, at, x, y)
+		c.store(x, y, ax, ay)
+		return ax, ay
+	}
 	return na.FuncSystem{
-		func(_ bool, x float64, y ...float64) float64 { ax, _ := r.activeAccel(st, at, x, y); return ax },
-		func(_ bool, x float64, y ...float64) float64 { _, ay := r.activeAccel(st, at, x, y); return ay },
+		func(_ bool, x float64, y ...float64) float64 { ax, _ := accel(x, y); return ax },
+		func(_ bool, x float64, y ...float64) float64 { _, ay := accel(x, y); return ay },
 		func(_ bool, _ float64, y ...float64) float64 { return y[iVx] }, // dx/dt
 		func(_ bool, _ float64, y ...float64) float64 { return y[iVy] }, // dy/dt
 		func(_ bool, _ float64, _ ...float64) float64 { return -mdot },  // dm/dt
@@ -127,11 +161,21 @@ func (r Rocket) passiveAccel(at *AeroTable, y []float64) (ax, ay float64) {
 }
 
 // passiveSystem builds the unpowered-flight ODE system for the payload (5 states,
-// translation only).
+// translation only). Shares one accelCache like activeSystem; the passive accel
+// does not depend on time, but keying the cache on t as well stays correct.
 func (r Rocket) passiveSystem(at *AeroTable) na.FuncSystem {
+	var c accelCache
+	accel := func(x float64, y []float64) (float64, float64) {
+		if c.hit(x, y) {
+			return c.ax, c.ay
+		}
+		ax, ay := r.passiveAccel(at, y)
+		c.store(x, y, ax, ay)
+		return ax, ay
+	}
 	return na.FuncSystem{
-		func(_ bool, _ float64, y ...float64) float64 { ax, _ := r.passiveAccel(at, y); return ax },
-		func(_ bool, _ float64, y ...float64) float64 { _, ay := r.passiveAccel(at, y); return ay },
+		func(_ bool, x float64, y ...float64) float64 { ax, _ := accel(x, y); return ax },
+		func(_ bool, x float64, y ...float64) float64 { _, ay := accel(x, y); return ay },
 		func(_ bool, _ float64, y ...float64) float64 { return y[iVx] }, // dx/dt
 		func(_ bool, _ float64, y ...float64) float64 { return y[iVy] }, // dy/dt
 		func(_ bool, _ float64, _ ...float64) float64 { return 0 },      // dm/dt
