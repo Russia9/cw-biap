@@ -106,7 +106,10 @@ func (r Rocket) simulatePassive(at *AeroTable, t0 float64, state []float64, h fl
 	if err != nil {
 		return nil, err
 	}
-	return appendRows(r, at, res, nil, r.PayloadPart, 4, true), nil
+	// The passive leg is tagged one past the last powered stage, which is what
+	// diagnose() keys its active-leg gate on. A literal tag would silently count
+	// re-entry rows as powered flight for any non-3-stage config.
+	return appendRows(r, at, res, nil, r.PayloadPart, len(r.Stages)+1, true), nil
 }
 
 // stopAtTime ends a powered stage at its burnout time, or earlier if the vehicle

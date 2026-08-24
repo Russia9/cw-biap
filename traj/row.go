@@ -24,7 +24,7 @@ type Row struct {
 	Lift  float64 // Y [N]
 	Mz    float64 // pitch moment [N·m]
 	Omega float64 // pitch rate ϑ̇ / ω_z [rad/s]
-	Stage int     // 1..3 active, 4 = payload (passive)
+	Stage int     // 1..len(Stages) active; len(Stages)+1 = payload (passive)
 }
 
 // appendRows converts an RK result into trajectory rows. st is the powered
