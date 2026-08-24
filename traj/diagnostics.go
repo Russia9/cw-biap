@@ -36,6 +36,14 @@ func diagnose(r Rocket, rows []Row, tk []float64) Diagnostics {
 	// Previous active row, for the finite-difference pitch rate.
 	prevT, prevPitch := 0.0, 0.0
 	havePrev := false
+	// Audit note (2026-08): the §4.4 maxima are gated to the active leg on
+	// purpose. The α/ϑ̇ limits only exist for controlled flight (the passive
+	// warhead flies velocity-aligned, α≡0 by model), and the q limit is the
+	// ascent structural limit — re-entry dynamic pressure on the warhead is a
+	// different regime §4.4 does not govern. α itself is never angle-wrapped:
+	// valid while the planar trajectory keeps Vx > 0, which every shipped
+	// config does; a config that turns past the vertical would need wrapping
+	// here and in AeroForces.
 	for i, row := range rows {
 		if row.Stage <= lastActive { // active leg — the §4.4 checks apply here
 			// Last active row of a stage sits exactly at its burnout time.
