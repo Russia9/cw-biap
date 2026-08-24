@@ -19,6 +19,7 @@ Usage:
 import argparse
 import copy
 import json
+import os
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -172,7 +173,16 @@ class Layout:
         ks = []
         for sp in self.specs:
             arc = self.base_arc(sp)
-            angles.append(arc[angle_key(sp.frame)])
+            key = angle_key(sp.frame)
+            if key not in arc:
+                # The typical cause: a stage's "steering" was flipped without
+                # renaming its arcs' angle fields to match the new frame.
+                raise SystemExit(
+                    f"stage {sp.stage + 1} arc {sp.arc + 1}: missing {key!r} "
+                    f"(the stage is {sp.frame!r}-steered; rename the arc's "
+                    "angle field to match)"
+                )
+            angles.append(arc[key])
             ks.append(arc_k(arc))
             if not sp.is_final:
                 split_times.append(
@@ -204,7 +214,14 @@ class Layout:
         c = copy.deepcopy(self.base)
         c["t_vertical"] = p.t_vertical
         for sp, angle, k in zip(self.specs, p.angles, p.ks):
-            self._arc(c, sp).update({angle_key(sp.frame): angle, "k": k})
+            arc = self._arc(c, sp)
+            arc.update({angle_key(sp.frame): angle, "k": k})
+            # Drop a stale opposite-frame angle (left behind by a steering
+            # flip in the base config): the simulator rejects an arc carrying
+            # both, which would silently fail every evaluation.
+            arc.pop(
+                "theta_deg" if sp.frame == "alpha" else "alpha_deg", None
+            )
         for sp, t_end in zip(self.splits, p.split_times):
             self._arc(c, sp)["t_end"] = t_end
         for sp, entry in zip(self.entries, p.entries):
@@ -222,10 +239,20 @@ class Layout:
         split_low = [sp.stage_start + 1.0 for sp in self.splits]
         split_high = [sp.stage_end - 0.1 for sp in self.splits]
         n_arcs = len(self.specs)
-        n_entries = len(self.entries)
+        # An entry angle lives in its arc's own frame (configfile.go reads
+        # theta0_deg as the raw entry value), so α-framed entries get the α
+        # bounds — 0..89° would be nonsense for a deviation angle.
+        entry_low = [
+            ANGLE_BOUNDS["alpha"][0] if sp.frame == "alpha" else 0.0
+            for sp in self.entries
+        ]
+        entry_high = [
+            ANGLE_BOUNDS["alpha"][1] if sp.frame == "alpha" else 89.0
+            for sp in self.entries
+        ]
         return (
-            [*angle_low, 5.0, *split_low, *k_low, *([0.0] * n_entries)],
-            [*angle_high, 40.0, *split_high, *([8.0] * n_arcs), *([89.0] * n_entries)],
+            [*angle_low, 5.0, *split_low, *k_low, *entry_low],
+            [*angle_high, 40.0, *split_high, *([8.0] * n_arcs), *entry_high],
         )
 
     def cma_stds(self) -> list[float]:
@@ -380,6 +407,11 @@ def objective(
     f = f_prog + ((m["impact_range_km"] - target_km) / SCALE_L) ** 2
 
     def pen(val: float, lim: float) -> float:
+        # A limit of zero means "not configured" (the Go side emits 0 for an
+        # absent h_max, and hand-written configs may drop others): no penalty
+        # term, rather than a division by zero mid-search.
+        if lim <= 0:
+            return 0.0
         return max(0.0, (val - lim * (1.0 - CON_MARGIN)) / lim) ** 2
 
     f += W_CON * pen(m["max_alpha_sub_deg"], m["lim_eps1"])
@@ -390,10 +422,7 @@ def objective(
     # a ϑ discontinuity at a steering-frame change shows up here as a huge value.
     f += W_CON * pen(m["max_pitch_rate_num_dps"], m["lim_theta_dot"])
     f += W_CON * pen(m["max_q_pa"], m["lim_qmax"])
-    # Max trajectory ordinate. Guarded: pen() divides by the limit, so a config
-    # that does not set h_max would raise instead of skipping the term.
-    if m.get("lim_h_max_km", 0) > 0:
-        f += W_CON * pen(m["apogee_h_km"], m["lim_h_max_km"])
+    f += W_CON * pen(m["apogee_h_km"], m.get("lim_h_max_km", 0.0))
     return f
 
 
@@ -462,15 +491,43 @@ def main() -> None:
         aero = str(Path(args.aero).resolve())
     print(f"aero: {aero or 'ZERO (no table)'}")
 
-    runner = SimRunner(binary=HERE / "out" / "traj-sim", cwd=HERE, aero=aero)
+    # A per-run binary: concurrent seed runs must not race one `go build -o`
+    # target while clobbering each other's executable. Removed on exit.
+    stem = Path(args.out_best).stem
+    runner = SimRunner(
+        binary=HERE / "out" / f"traj-sim-{stem}-{os.getpid()}", cwd=HERE, aero=aero
+    )
     runner.build()
+    try:
+        run_search(args, layout, runner)
+    finally:
+        runner.binary.unlink(missing_ok=True)
 
+
+def run_search(args: argparse.Namespace, layout: Layout, runner: SimRunner) -> None:
     x0 = args.x0 if args.x0 is not None else layout.default_x0()
     expected = layout.vector_dim()
     if len(x0) != expected:
         raise SystemExit(
             f"--x0 must contain {expected} values for this config, got {len(x0)}"
         )
+
+    # A base config the simulator rejects outright would score every candidate
+    # F_FAIL and present the search with a flat, hopeless landscape; surface
+    # the actual error before spending hours on it.
+    try:
+        runner.metrics(layout.config_from_x(x0), args.h_opt)
+    except SimError as exc:
+        msg = f"the starting configuration does not simulate: {exc}"
+        if exc.stderr:
+            msg += f"\nsimulator stderr:\n{exc.stderr}"
+        raise SystemExit(msg) from exc
+
+    # The cma logger resolves its prefix against the process cwd while the
+    # simulator runs with cwd=traj/; anchor it so the logs land in
+    # traj/outcmaes/ regardless of the launch directory.
+    outcmaes = HERE / "outcmaes"
+    outcmaes.mkdir(exist_ok=True)
 
     # Per-dimension steps: angles [deg], t_в [s], t_end [s], k [-], entries
     # [deg]. sigma0 scales all.
@@ -481,7 +538,7 @@ def main() -> None:
         "verb_disp": 10,
         "seed": args.seed,
         # Keyed to --out-best so concurrent runs do not share log files.
-        "verb_filenameprefix": f"outcmaes/{Path(args.out_best).stem}-",
+        "verb_filenameprefix": f"{outcmaes}/{Path(args.out_best).stem}-",
     }
     es = cma.CMAEvolutionStrategy(x0, args.sigma0, opts)
     es.optimize(lambda x: objective(layout, runner, x, args.target, args.h_opt))
@@ -499,7 +556,7 @@ def main() -> None:
         json.dump(layout.config_from_x(best), f, indent=2)
     print(f"wrote best config -> {best_path}")
     print(
-        f"run command:\n  ./out/traj-sim -config={args.out_best} "
+        f"run command:\n  go run ./main -config={args.out_best} "
         f"-h={args.h_final} -out=out/traj.csv"
     )
 
