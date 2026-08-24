@@ -19,38 +19,16 @@ Usage:
 import argparse
 import copy
 import json
-import os
 import subprocess
-import sys
 import tempfile
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import cma
 
 HERE = Path(__file__).parent
-BIN = HERE / "out" / "traj-sim"
-
-
-def _base_config_path() -> Path:
-    """Resolve --config before argparse runs.
-
-    The arc layout (SPECS/SPLITS/ENTRIES below) is derived at import time from
-    the base config, so the path has to be known before main() parses argv.
-    """
-    argv = sys.argv[1:]
-    for i, a in enumerate(argv):
-        if a == "--config" and i + 1 < len(argv):
-            return Path(argv[i + 1])
-        if a.startswith("--config="):
-            return Path(a.split("=", 1)[1])
-    return HERE / "rocket.json"
-
-
-BASE_CONFIG = _base_config_path()
-
-# CFD coefficient table passed to every simulator call, set from --aero. Empty
-# means the simulator runs with zero aerodynamics, which is the default.
-AERO = ""
 
 # Objective weights. SCALE_L sets the range-error scale (km); a miss of SCALE_L
 # costs 1. W_CON makes any constraint violation dominate the range term.
@@ -83,19 +61,19 @@ W_TIME = 1000.0
 DEFAULT_K_EXP = 3.0
 DEFAULT_K_COS = 1.1
 
-with open(BASE_CONFIG) as _f:
-    _BASE = json.load(_f)
+# Angle bounds per steering frame. ϑ arcs sweep the whole powered turn; α arcs
+# only ever need to reach a little past the §4.4 supersonic limit of 10 deg, and
+# a small positive α must stay reachable for the pitch-over.
+ANGLE_BOUNDS = {"theta": (5.0, 89.0), "alpha": (-12.0, 3.0)}
+
+Config = dict[str, Any]
 
 
-def build() -> None:
-    subprocess.run(["go", "build", "-o", str(BIN), "./main"], cwd=HERE, check=True)
-
-
-def arc_shape(arc: dict) -> str:
+def arc_shape(arc: Config) -> str:
     return arc.get("shape") or "exp"
 
 
-def stage_frame(stage: dict) -> str:
+def stage_frame(stage: Config) -> str:
     """Steering frame of a stage: "theta" (arcs are ϑ) or "alpha" (arcs are α)."""
     return stage.get("steering") or "theta"
 
@@ -104,236 +82,304 @@ def angle_key(frame: str) -> str:
     return "alpha_deg" if frame == "alpha" else "theta_deg"
 
 
-def arc_k(arc: dict) -> float:
+def arc_k(arc: Config) -> float:
     if "k" in arc:
         return arc["k"]
     return DEFAULT_K_COS if arc_shape(arc) == "cos" else DEFAULT_K_EXP
 
 
-def arc_specs() -> list[dict]:
-    """Return flattened arc metadata in the same order used by config parsing."""
-    specs = []
-    stage_start = 0.0
-    for si, st in enumerate(_BASE["stages"]):
-        stage_end = stage_start + st["burn_time"]
-        for ai, _arc in enumerate(st["pitch"]):
-            specs.append(
-                {
-                    "stage": si,
-                    "arc": ai,
-                    "stage_start": stage_start,
-                    "stage_end": stage_end,
-                    "is_final": ai == len(st["pitch"]) - 1,
-                    "frame": stage_frame(st),
-                }
+@dataclass(frozen=True)
+class ArcSpec:
+    """Position and steering context of one pitch arc in the flattened program."""
+
+    stage: int
+    arc: int
+    stage_start: float
+    stage_end: float
+    is_final: bool
+    frame: str
+
+    @property
+    def ref(self) -> tuple[int, int]:
+        return (self.stage, self.arc)
+
+
+@dataclass(frozen=True)
+class Params:
+    """One optimizer vector, unpacked into its named blocks."""
+
+    angles: list[float]
+    t_vertical: float
+    split_times: list[float]
+    ks: list[float]
+    entries: list[float]
+
+
+@dataclass(frozen=True)
+class Layout:
+    """The optimization problem's fixed structure, derived from one base config.
+
+    The base config fixes the arc layout, shapes and steering frames for the
+    whole run; the vector layout is [angles | t_в | non-final t_end | ks |
+    frame-change entry angles].
+    """
+
+    base: Config
+    specs: list[ArcSpec]
+    splits: list[ArcSpec]
+    entries: list[ArcSpec]
+
+    @classmethod
+    def from_config(cls, base: Config) -> "Layout":
+        specs = []
+        stage_start = 0.0
+        for si, st in enumerate(base["stages"]):
+            stage_end = stage_start + st["burn_time"]
+            for ai in range(len(st["pitch"])):
+                specs.append(
+                    ArcSpec(
+                        stage=si,
+                        arc=ai,
+                        stage_start=stage_start,
+                        stage_end=stage_end,
+                        is_final=ai == len(st["pitch"]) - 1,
+                        frame=stage_frame(st),
+                    )
+                )
+            stage_start = stage_end
+        splits = [sp for sp in specs if not sp.is_final]
+        # Arcs carrying an explicit entry pitch, which a stage needs when it
+        # switches steering frame. Their continuity with the preceding arc is
+        # not structural, so the objective penalises the resulting ϑ jump via
+        # max_pitch_rate_num_dps.
+        entries = [sp for sp in specs if "theta0_deg" in cls._arc(base, sp)]
+        return cls(base=base, specs=specs, splits=splits, entries=entries)
+
+    @staticmethod
+    def _arc(base: Config, sp: ArcSpec) -> Config:
+        return base["stages"][sp.stage]["pitch"][sp.arc]
+
+    def base_arc(self, sp: ArcSpec) -> Config:
+        return self._arc(self.base, sp)
+
+    def vector_dim(self) -> int:
+        """Angles, t_в, non-final t_end values, ks, then frame-change entry angles."""
+        return 2 * len(self.specs) + 1 + len(self.splits) + len(self.entries)
+
+    def default_x0(self) -> list[float]:
+        angles = []
+        split_times = []
+        ks = []
+        for sp in self.specs:
+            arc = self.base_arc(sp)
+            angles.append(arc[angle_key(sp.frame)])
+            ks.append(arc_k(arc))
+            if not sp.is_final:
+                split_times.append(
+                    arc.get("t_end", (sp.stage_start + sp.stage_end) / 2)
+                )
+        if len(split_times) != len(self.splits):
+            raise RuntimeError("internal optimizer layout mismatch")
+        entries = [self.base_arc(sp)["theta0_deg"] for sp in self.entries]
+        return [*angles, self.base["t_vertical"], *split_times, *ks, *entries]
+
+    def unpack(self, x: Sequence[float]) -> Params:
+        n_arcs = len(self.specs)
+        n_splits = len(self.splits)
+        if len(x) != self.vector_dim():
+            raise ValueError(
+                f"expected {self.vector_dim()} optimizer values, got {len(x)}"
             )
-        stage_start = stage_end
-    return specs
+        return Params(
+            angles=[float(v) for v in x[:n_arcs]],
+            t_vertical=float(x[n_arcs]),
+            split_times=[float(v) for v in x[n_arcs + 1 : n_arcs + 1 + n_splits]],
+            ks=[float(v) for v in x[n_arcs + 1 + n_splits : 2 * n_arcs + 1 + n_splits]],
+            entries=[float(v) for v in x[2 * n_arcs + 1 + n_splits :]],
+        )
 
+    def config_from_x(self, x: Sequence[float]) -> Config:
+        """Map the CMA-ES vector onto a rocket config (arc shapes kept from base)."""
+        p = self.unpack(x)
+        c = copy.deepcopy(self.base)
+        c["t_vertical"] = p.t_vertical
+        for sp, angle, k in zip(self.specs, p.angles, p.ks):
+            self._arc(c, sp).update({angle_key(sp.frame): angle, "k": k})
+        for sp, t_end in zip(self.splits, p.split_times):
+            self._arc(c, sp)["t_end"] = t_end
+        for sp, entry in zip(self.entries, p.entries):
+            self._arc(c, sp)["theta0_deg"] = entry
+        return c
 
-# The arc layout is fixed by _BASE for the whole run, so resolve it once:
-# unpack_x() reads it on every objective evaluation.
-SPECS = arc_specs()
-SPLITS = [sp for sp in SPECS if not sp["is_final"]]
+    def bounds(self) -> tuple[list[float], list[float]]:
+        angle_low, angle_high = zip(
+            *(ANGLE_BOUNDS[sp.frame] for sp in self.specs), strict=True
+        )
+        k_low = [
+            1.0 if arc_shape(self.base_arc(sp)) == "cos" else -8.0
+            for sp in self.specs
+        ]
+        split_low = [sp.stage_start + 1.0 for sp in self.splits]
+        split_high = [sp.stage_end - 0.1 for sp in self.splits]
+        n_arcs = len(self.specs)
+        n_entries = len(self.entries)
+        return (
+            [*angle_low, 5.0, *split_low, *k_low, *([0.0] * n_entries)],
+            [*angle_high, 40.0, *split_high, *([8.0] * n_arcs), *([89.0] * n_entries)],
+        )
 
+    def cma_stds(self) -> list[float]:
+        n_arcs = len(self.specs)
+        return [
+            *([10.0] * n_arcs),
+            8.0,
+            *([8.0] * len(self.splits)),
+            *([3.0] * n_arcs),
+            *([8.0] * len(self.entries)),
+        ]
 
-def base_arc(sp: dict) -> dict:
-    return _BASE["stages"][sp["stage"]]["pitch"][sp["arc"]]
+    def _split_by_ref(self, p: Params) -> dict[tuple[int, int], float]:
+        return {sp.ref: t_end for sp, t_end in zip(self.splits, p.split_times)}
 
+    def end_times(self, p: Params) -> list[float]:
+        split_by_ref = self._split_by_ref(p)
+        return [
+            sp.stage_end if sp.is_final else split_by_ref[sp.ref] for sp in self.specs
+        ]
 
-# Arcs carrying an explicit entry pitch, which a stage needs when it switches
-# steering frame. Their continuity with the preceding arc is not structural, so
-# the objective penalises the resulting ϑ jump via max_pitch_rate_num_dps.
-ENTRIES = [sp for sp in SPECS if "theta0_deg" in base_arc(sp)]
+    def program_penalty(self, x: Sequence[float]) -> float:
+        p = self.unpack(x)
+        ends = self.end_times(p)
+        f = 0.0
 
+        prev = p.t_vertical
+        for end in ends:
+            f += W_TIME * max(0.0, (prev + 0.1 - end) / 10.0) ** 2
+            prev = end
 
-def vector_dim() -> int:
-    """Angles, t_в, non-final t_end values, ks, then frame-change entry angles."""
-    return 2 * len(SPECS) + 1 + len(SPLITS) + len(ENTRIES)
+        # Keep the program physical: expect pitch terminal angles to decrease
+        # with time across the flattened powered program. α arcs are exempt — α
+        # is a deviation from the flight path, not a monotone attitude, and it
+        # has to be free to relax back toward zero as the atmosphere thins.
+        f += W_MONO * sum(
+            max(0.0, p.angles[i + 1] - p.angles[i]) ** 2
+            for i in range(len(p.angles) - 1)
+            if self.specs[i].frame == "theta" and self.specs[i + 1].frame == "theta"
+        )
+        return f
 
-
-def default_x0() -> list[float]:
-    specs, splits = SPECS, SPLITS
-    angles = []
-    split_times = []
-    ks = []
-    for sp in specs:
-        arc = base_arc(sp)
-        angles.append(arc[angle_key(sp["frame"])])
-        ks.append(arc_k(arc))
-        if not sp["is_final"]:
-            split_times.append(
-                arc.get("t_end", (sp["stage_start"] + sp["stage_end"]) / 2)
+    def format_params(self, x: Sequence[float]) -> str:
+        p = self.unpack(x)
+        split_by_ref = self._split_by_ref(p)
+        entry_by_ref = {sp.ref: e for sp, e in zip(self.entries, p.entries)}
+        lines = [f"t_в={p.t_vertical:.3f} s"]
+        for sp, angle, k in zip(self.specs, p.angles, p.ks):
+            sym = "α" if sp.frame == "alpha" else "ϑ"
+            t_end = "" if sp.is_final else f", t_end={split_by_ref[sp.ref]:.3f} s"
+            entry = (
+                f", ϑ0={entry_by_ref[sp.ref]:.3f} deg" if sp.ref in entry_by_ref else ""
             )
-    if len(split_times) != len(splits):
-        raise RuntimeError("internal optimizer layout mismatch")
-    entries = [base_arc(sp)["theta0_deg"] for sp in ENTRIES]
-    return [*angles, _BASE["t_vertical"], *split_times, *ks, *entries]
+            lines.append(
+                f"s{sp.stage + 1}a{sp.arc + 1}: {sym}={angle:.3f} deg, "
+                f"shape={arc_shape(self.base_arc(sp))}, k={k:.3f}{t_end}{entry}"
+            )
+        return "\n  ".join(lines)
 
 
-def unpack_x(x):
-    specs, splits = SPECS, SPLITS
-    n_arcs = len(specs)
-    n_splits = len(splits)
-    if len(x) != vector_dim():
-        raise ValueError(f"expected {vector_dim()} optimizer values, got {len(x)}")
-    angles = list(x[:n_arcs])
-    t_vertical = float(x[n_arcs])
-    split_times = list(x[n_arcs + 1 : n_arcs + 1 + n_splits])
-    ks = list(x[n_arcs + 1 + n_splits : 2 * n_arcs + 1 + n_splits])
-    entries = list(x[2 * n_arcs + 1 + n_splits :])
-    return specs, splits, angles, t_vertical, split_times, ks, entries
+class SimError(Exception):
+    """A simulator evaluation that could not produce metrics.
+
+    Wraps every failure mode of one run — a non-zero exit, a timeout, or
+    unparseable output — and carries the simulator's stderr for reporting.
+    """
+
+    def __init__(self, message: str, stderr: str = "") -> None:
+        super().__init__(message)
+        self.stderr = stderr.strip()
 
 
-def config_from_x(x) -> dict:
-    """Map the CMA-ES vector onto a rocket config (arc shapes kept from base)."""
-    specs, splits, angles, t_vertical, split_times, ks, entries = unpack_x(x)
-    c = copy.deepcopy(_BASE)
-    c["t_vertical"] = t_vertical
-    for sp, angle, k in zip(specs, angles, ks):
-        c["stages"][sp["stage"]]["pitch"][sp["arc"]].update(
-            {angle_key(sp["frame"]): angle, "k": k}
+@dataclass(frozen=True)
+class SimRunner:
+    """Runs the Go simulator binary against generated config files."""
+
+    binary: Path
+    cwd: Path
+    aero: str  # resolved averages.csv path, or "" for zero aerodynamics
+    timeout: float = 60.0
+
+    def build(self) -> None:
+        subprocess.run(
+            ["go", "build", "-o", str(self.binary), "./main"],
+            cwd=self.cwd,
+            check=True,
         )
-    for sp, t_end in zip(splits, split_times):
-        c["stages"][sp["stage"]]["pitch"][sp["arc"]]["t_end"] = t_end
-    for sp, entry in zip(ENTRIES, entries):
-        c["stages"][sp["stage"]]["pitch"][sp["arc"]]["theta0_deg"] = entry
-    return c
+
+    def run(
+        self,
+        cfg: Config,
+        h: float,
+        metrics: bool = True,
+        out: str | None = None,
+    ) -> "subprocess.CompletedProcess[str]":
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, dir=self.cwd
+        ) as f:
+            json.dump(cfg, f)
+            cfg_path = Path(f.name)
+        try:
+            cmd = [str(self.binary), f"-config={cfg_path}", f"-h={h}"]
+            if self.aero:
+                cmd.append(f"-aero={self.aero}")
+            if metrics:
+                cmd.append("-metrics")
+            if out is not None:
+                cmd.append(f"-out={out}")
+            # A normal evaluation takes ~40 ms. The timeout is a backstop
+            # against a pathological config the simulator cannot resolve;
+            # objective() scores the resulting SimError as infeasible.
+            try:
+                return subprocess.run(
+                    cmd,
+                    cwd=self.cwd,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=self.timeout,
+                )
+            except subprocess.CalledProcessError as exc:
+                raise SimError(str(exc), exc.stderr or "") from exc
+            except subprocess.TimeoutExpired as exc:
+                stderr = exc.stderr
+                if isinstance(stderr, bytes):
+                    stderr = stderr.decode(errors="replace")
+                raise SimError(str(exc), stderr or "") from exc
+        finally:
+            cfg_path.unlink()
+
+    def metrics(self, cfg: Config, h: float) -> dict[str, float]:
+        res = self.run(cfg, h, metrics=True)
+        try:
+            return json.loads(res.stdout.strip().splitlines()[-1])
+        except (json.JSONDecodeError, IndexError) as exc:
+            raise SimError(f"unparseable metrics output: {exc}", res.stderr) from exc
 
 
-def k_lower_bounds() -> list[float]:
-    return [1.0 if arc_shape(base_arc(sp)) == "cos" else -8.0 for sp in SPECS]
-
-
-# Angle bounds per steering frame. ϑ arcs sweep the whole powered turn; α arcs
-# only ever need to reach a little past the §4.4 supersonic limit of 10 deg, and
-# a small positive α must stay reachable for the pitch-over.
-ANGLE_BOUNDS = {"theta": (5.0, 89.0), "alpha": (-12.0, 3.0)}
-
-
-def angle_bounds() -> tuple[list[float], list[float]]:
-    lo, hi = zip(*(ANGLE_BOUNDS[sp["frame"]] for sp in SPECS))
-    return list(lo), list(hi)
-
-
-def bounds() -> list[list[float]]:
-    n_arcs = len(SPECS)
-    n_entries = len(ENTRIES)
-    angle_low, angle_high = angle_bounds()
-    split_low = [sp["stage_start"] + 1.0 for sp in SPLITS]
-    split_high = [sp["stage_end"] - 0.1 for sp in SPLITS]
-    return [
-        [*angle_low, 5.0, *split_low, *k_lower_bounds(), *([0.0] * n_entries)],
-        [*angle_high, 40.0, *split_high, *([8.0] * n_arcs), *([89.0] * n_entries)],
-    ]
-
-
-def cma_stds() -> list[float]:
-    n_arcs = len(SPECS)
-    return [
-        *([10.0] * n_arcs),
-        8.0,
-        *([8.0] * len(SPLITS)),
-        *([3.0] * n_arcs),
-        *([8.0] * len(ENTRIES)),
-    ]
-
-
-def end_times_from_x(x) -> list[float]:
-    specs, splits, _angles, _t_vertical, split_times, _ks, _entries = unpack_x(x)
-    split_by_ref = {
-        (sp["stage"], sp["arc"]): t_end for sp, t_end in zip(splits, split_times)
-    }
-    return [
-        sp["stage_end"] if sp["is_final"] else split_by_ref[(sp["stage"], sp["arc"])]
-        for sp in specs
-    ]
-
-
-def program_penalty(x) -> float:
-    specs, _splits, angles, t_vertical, _split_times, _ks, _entries = unpack_x(x)
-    ends = end_times_from_x(x)
-    f = 0.0
-
-    prev = t_vertical
-    for end in ends:
-        f += W_TIME * max(0.0, (prev + 0.1 - end) / 10.0) ** 2
-        prev = end
-
-    # Keep the program physical: expect pitch terminal angles to decrease with
-    # time across the flattened powered program. α arcs are exempt — α is a
-    # deviation from the flight path, not a monotone attitude, and it has to be
-    # free to relax back toward zero as the atmosphere thins.
-    f += W_MONO * sum(
-        max(0.0, angles[i + 1] - angles[i]) ** 2
-        for i in range(len(angles) - 1)
-        if specs[i]["frame"] == "theta" and specs[i + 1]["frame"] == "theta"
-    )
-    return f
-
-
-def format_params(x) -> str:
-    specs, splits, angles, t_vertical, split_times, ks, entries = unpack_x(x)
-    split_by_ref = {
-        (sp["stage"], sp["arc"]): t_end for sp, t_end in zip(splits, split_times)
-    }
-    entry_by_ref = {(sp["stage"], sp["arc"]): e for sp, e in zip(ENTRIES, entries)}
-    lines = [f"t_в={t_vertical:.3f} s"]
-    for sp, angle, k in zip(specs, angles, ks):
-        ref = (sp["stage"], sp["arc"])
-        sym = "α" if sp["frame"] == "alpha" else "ϑ"
-        t_end = "" if sp["is_final"] else f", t_end={split_by_ref[ref]:.3f} s"
-        entry = f", ϑ0={entry_by_ref[ref]:.3f} deg" if ref in entry_by_ref else ""
-        lines.append(
-            f"s{sp['stage'] + 1}a{sp['arc'] + 1}: {sym}={angle:.3f} deg, "
-            f"shape={arc_shape(base_arc(sp))}, k={k:.3f}{t_end}{entry}"
-        )
-    return "\n  ".join(lines)
-
-
-def run_sim(x, h, metrics=True, out=None):
-    cfg = config_from_x(x)
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, dir=HERE) as f:
-        json.dump(cfg, f)
-        cfg_path = f.name
+def objective(
+    layout: Layout,
+    runner: SimRunner,
+    x: Sequence[float],
+    target_km: float,
+    h: float,
+) -> float:
+    f_prog = layout.program_penalty(x)
     try:
-        cmd = [str(BIN), f"-config={cfg_path}", f"-h={h}"]
-        if AERO:
-            cmd.append(f"-aero={AERO}")
-        if metrics:
-            cmd.append("-metrics")
-        if out is not None:
-            cmd.append(f"-out={out}")
-        # A normal evaluation takes ~40 ms. The timeout is a backstop against a
-        # pathological config the simulator cannot resolve; objective() scores
-        # the resulting TimeoutExpired as infeasible.
-        return subprocess.run(
-            cmd, cwd=HERE, capture_output=True, text=True, check=True, timeout=60
-        )
-    finally:
-        os.unlink(cfg_path)
-
-
-def metrics(x, h) -> dict:
-    res = run_sim(x, h, metrics=True)
-    return json.loads(res.stdout.strip().splitlines()[-1])
-
-
-def objective(x, target_km, h) -> float:
-    f_prog = program_penalty(x)
-    try:
-        m = metrics(x, h)
-    except (
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        json.JSONDecodeError,
-        IndexError,
-    ):
+        m = runner.metrics(layout.config_from_x(x), h)
+    except SimError:
         return F_FAIL + f_prog  # infeasible / failed run
 
     f = f_prog + ((m["impact_range_km"] - target_km) / SCALE_L) ** 2
 
-    def pen(val, lim):
+    def pen(val: float, lim: float) -> float:
         return max(0.0, (val - lim * (1.0 - CON_MARGIN)) / lim) ** 2
 
     f += W_CON * pen(m["max_alpha_sub_deg"], m["lim_eps1"])
@@ -351,7 +397,7 @@ def objective(x, target_km, h) -> float:
     return f
 
 
-def main() -> None:
+def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--target", type=float, default=12000.0, help="target surface range [km]"
@@ -395,32 +441,42 @@ def main() -> None:
         default=None,
         help=(
             "initial vector: all arc terminal angles [deg], t_в [s], t_end for "
-            "non-final arcs [s], then all arc k values; defaults from rocket.json"
+            "non-final arcs [s], all arc k values, then any frame-change entry "
+            "angles [deg]; defaults from rocket.json"
         ),
     )
-    args = ap.parse_args()
-    if Path(args.config).resolve() != BASE_CONFIG.resolve():
-        raise SystemExit("internal: --config disagrees with the imported base config")
+    return ap.parse_args()
 
-    global AERO
+
+def main() -> None:
+    args = parse_args()
+
+    with open(args.config) as f:
+        layout = Layout.from_config(json.load(f))
+
+    aero = ""
     if args.aero:
         if not Path(args.aero).exists():
             raise SystemExit(f"aero table not found: {args.aero}")
-        # run_sim executes with cwd=HERE, so resolve before handing it over.
-        AERO = str(Path(args.aero).resolve())
-    print(f"aero: {AERO or 'ZERO (no table)'}")
+        # The simulator executes with cwd=traj/, so resolve before handing over.
+        aero = str(Path(args.aero).resolve())
+    print(f"aero: {aero or 'ZERO (no table)'}")
 
-    build()
+    runner = SimRunner(binary=HERE / "out" / "traj-sim", cwd=HERE, aero=aero)
+    runner.build()
 
-    x0 = args.x0 if args.x0 is not None else default_x0()
-    expected = vector_dim()
+    x0 = args.x0 if args.x0 is not None else layout.default_x0()
+    expected = layout.vector_dim()
     if len(x0) != expected:
-        raise SystemExit(f"--x0 must contain {expected} values for this config, got {len(x0)}")
+        raise SystemExit(
+            f"--x0 must contain {expected} values for this config, got {len(x0)}"
+        )
 
-    # Per-dimension steps: angles [deg], t_в [s], k [-]. sigma0 scales all.
+    # Per-dimension steps: angles [deg], t_в [s], t_end [s], k [-], entries
+    # [deg]. sigma0 scales all.
     opts = {
-        "bounds": bounds(),
-        "CMA_stds": cma_stds(),
+        "bounds": list(layout.bounds()),
+        "CMA_stds": layout.cma_stds(),
         "maxiter": args.maxiter,
         "verb_disp": 10,
         "seed": args.seed,
@@ -428,17 +484,19 @@ def main() -> None:
         "verb_filenameprefix": f"outcmaes/{Path(args.out_best).stem}-",
     }
     es = cma.CMAEvolutionStrategy(x0, args.sigma0, opts)
-    es.optimize(lambda x: objective(x, args.target, args.h_opt))
+    es.optimize(lambda x: objective(layout, runner, x, args.target, args.h_opt))
 
     best = es.result.xbest
-    print(f"\nbest params:\n  {format_params(best)}")
+    if best is None:
+        raise SystemExit("search produced no evaluated candidate")
+    print(f"\nbest params:\n  {layout.format_params(best)}")
 
-    # Persist the best config before anything that can fail, so a broken final
-    # run never discards the whole search.
+    # Persist the best config before the verification runs below, so a broken
+    # final run never discards the whole search.
     best_path = HERE / args.out_best
     best_path.parent.mkdir(parents=True, exist_ok=True)
     with open(best_path, "w") as f:
-        json.dump(config_from_x(best), f, indent=2)
+        json.dump(layout.config_from_x(best), f, indent=2)
     print(f"wrote best config -> {best_path}")
     print(
         f"run command:\n  ./out/traj-sim -config={args.out_best} "
@@ -446,9 +504,11 @@ def main() -> None:
     )
 
     try:
-        m = metrics(best, args.h_final)
-    except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as exc:
+        m = runner.metrics(layout.config_from_x(best), args.h_final)
+    except SimError as exc:
         print(f"\nfinal metrics run failed: {exc}")
+        if exc.stderr:
+            print(f"simulator stderr:\n{exc.stderr}")
         return
     miss = m["impact_range_km"] - args.target
     print(
@@ -467,7 +527,15 @@ def main() -> None:
 
     # Final fine-step run: writes out/traj.csv and prints the full diagnostics.
     print("\n=== final run (fine step) ===")
-    res = run_sim(best, args.h_final, metrics=False, out="out/traj.csv")
+    try:
+        res = runner.run(
+            layout.config_from_x(best), args.h_final, metrics=False, out="out/traj.csv"
+        )
+    except SimError as exc:
+        print(f"final run failed: {exc}")
+        if exc.stderr:
+            print(f"simulator stderr:\n{exc.stderr}")
+        return
     print(res.stdout, end="")
 
 
