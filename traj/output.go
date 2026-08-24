@@ -21,10 +21,9 @@ func WriteCSV(rows []Row, path string, decimate int) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	// bufio write errors are sticky and reported by Flush; Close reports what
+	// the OS held back. Both must be checked or a full disk truncates silently.
 	w := bufio.NewWriter(f)
-	defer w.Flush()
-
 	fmt.Fprintln(w, "t;m;Vx;Vy;x;y;H;V;vartheta;theta;alpha;Mach;q;X;Y;Mz;omega;stage")
 	for i, r := range rows {
 		if i%decimate != 0 && i != len(rows)-1 {
@@ -35,7 +34,11 @@ func WriteCSV(rows []Row, path string, decimate int) error {
 			r.Pitch*r2d, r.Theta*r2d, r.Alpha*r2d, r.Mach, r.Q,
 			r.Drag, r.Lift, r.Mz, r.Omega*r2d, r.Stage)
 	}
-	return nil
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // MetricsJSON returns a single-line JSON object with the terminal trajectory
@@ -62,6 +65,10 @@ func MetricsJSON(d Diagnostics, lim Limits) string {
 		"lim_theta_dot":          lim.PitchRateMax,
 		"lim_qmax":               lim.Qmax,
 	}
+	// Marshal fails on a map[string]float64 only for non-finite values, which
+	// a blown-up simulation can produce (NaN/Inf diagnostics). The empty string
+	// returned then is not valid JSON, so the optimizer's json.loads raises and
+	// the evaluation is scored as failed — exactly what a NaN flight deserves.
 	b, _ := json.Marshal(m)
 	return string(b)
 }

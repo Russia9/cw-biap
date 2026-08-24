@@ -2,6 +2,9 @@ package traj
 
 import (
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -116,5 +119,29 @@ func TestZeroAero(t *testing.T) {
 func TestLoadAeroErrors(t *testing.T) {
 	if _, err := LoadAero("testdata/does-not-exist.csv"); err == nil {
 		t.Error("missing file: want error")
+	}
+
+	write := func(content string) string {
+		p := filepath.Join(t.TempDir(), "aero.csv")
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	header := "part,Ma,alpha,Cd_mean,Cl_mean,CmPitch_mean\n"
+
+	_, err := LoadAero(write(header + "all,2.0,0,not-a-number,0,0\n"))
+	if err == nil || !strings.Contains(err.Error(), "Cd_mean") || !strings.Contains(err.Error(), "line 2") {
+		t.Errorf("malformed cell: err = %v, want a Cd_mean parse error naming line 2", err)
+	}
+
+	_, err = LoadAero(write(header + "all,2.0,0\n"))
+	if err == nil || !strings.Contains(err.Error(), "fields") {
+		t.Errorf("short row: err = %v, want a field-count error", err)
+	}
+
+	_, err = LoadAero(write("part,Ma,alpha,Cd_mean,Cl_mean\nall,2.0,0,0.5,0\n"))
+	if err == nil || !strings.Contains(err.Error(), "CmPitch_mean") {
+		t.Errorf("missing column: err = %v, want a CmPitch_mean column error", err)
 	}
 }

@@ -85,19 +85,48 @@ func LoadAero(path string) (*AeroTable, error) {
 		}
 	}
 
+	// The widest column index any needed field lives at; shorter data rows are
+	// rejected instead of panicking on the index.
+	maxCol := 0
+	for _, n := range need {
+		if col[n] > maxCol {
+			maxCol = col[n]
+		}
+	}
+
 	type sample struct{ alpha, cd, cl, cm float64 }
 	// part -> mach -> samples
 	raw := map[string]map[float64][]sample{}
-	atof := func(s string) float64 { v, _ := strconv.ParseFloat(s, 64); return v }
 
-	for _, rec := range records[1:] {
+	for ri, rec := range records[1:] {
+		line := ri + 2 // 1-based, after the header
+		if len(rec) <= maxCol {
+			return nil, fmt.Errorf("aero: %s line %d: %d fields, need at least %d", path, line, len(rec), maxCol+1)
+		}
+		atof := func(name string) (float64, error) {
+			v, err := strconv.ParseFloat(rec[col[name]], 64)
+			if err != nil {
+				return 0, fmt.Errorf("aero: %s line %d, column %s: %w", path, line, name, err)
+			}
+			return v, nil
+		}
 		part := rec[col["part"]]
-		ma := atof(rec[col["Ma"]])
-		s := sample{
-			alpha: atof(rec[col["alpha"]]),
-			cd:    atof(rec[col["Cd_mean"]]),
-			cl:    atof(rec[col["Cl_mean"]]),
-			cm:    atof(rec[col["CmPitch_mean"]]),
+		ma, err := atof("Ma")
+		if err != nil {
+			return nil, err
+		}
+		var s sample
+		if s.alpha, err = atof("alpha"); err != nil {
+			return nil, err
+		}
+		if s.cd, err = atof("Cd_mean"); err != nil {
+			return nil, err
+		}
+		if s.cl, err = atof("Cl_mean"); err != nil {
+			return nil, err
+		}
+		if s.cm, err = atof("CmPitch_mean"); err != nil {
+			return nil, err
 		}
 		if raw[part] == nil {
 			raw[part] = map[float64][]sample{}
