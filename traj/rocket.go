@@ -18,7 +18,6 @@ type Stage struct {
 	BurnTime float64 // Δt_к [s]
 	IspSL    float64 // specific impulse at sea level (P_уд.0) [s]
 	IspVac   float64 // specific impulse in vacuum (P_уд.п) [s]
-	MotorDia float64 // motor diameter [m] — informational; see RrefAll in constants.go
 	AeroPart string  // aerodynamic part key (see fallbacks in aero.go)
 }
 

@@ -71,7 +71,7 @@ func aeroForcesWith(at *AeroTable, part string, pitch float64, y []float64, rho,
 	}
 	alphaDeg := (pitch - FlightAngle(y)) * r2d
 	cd, cl, cm := at.Coeffs(part, mach, alphaDeg)
-	X = DragScale * cd * q * Aref
+	X = cd * q * Aref
 	Y = cl * q * Aref
 	Mz = cm * q * Aref * Lref
 	return X, Y, Mz

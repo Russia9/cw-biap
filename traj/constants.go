@@ -52,11 +52,6 @@ const (
 // Aref is the reference area for aerodynamic forces/moments [m²].
 var Aref = math.Pi * RrefAll * RrefAll
 
-// DragScale multiplies the tabulated drag coefficient, for sensitivity studies
-// against the CFD data. Set to 0.9 to use 90 % of the tabulated Cd. Has no
-// effect while aerodynamics are zeroed (see ZeroAero in aero.go).
-const DragScale = 1.0
-
 // Angle conversions shared across the package.
 const r2d = 180 / math.Pi
 

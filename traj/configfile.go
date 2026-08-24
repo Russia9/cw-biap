@@ -35,7 +35,6 @@ type jsonStage struct {
 	BurnTime float64   `json:"burn_time"`
 	IspSL    float64   `json:"isp_sl"`
 	IspVac   float64   `json:"isp_vac"`
-	MotorDia float64   `json:"dm"`
 	AeroPart string    `json:"part"`
 	Steering string    `json:"steering,omitempty"`
 	Pitch    []jsonArc `json:"pitch"`
@@ -85,7 +84,7 @@ func parseConfig(data []byte) (Rocket, Limits, error) {
 	for i, js := range c.Stages {
 		stages[i] = Stage{
 			M0: js.M0, MFuel: js.MFuel, BurnTime: js.BurnTime,
-			IspSL: js.IspSL, IspVac: js.IspVac, MotorDia: js.MotorDia, AeroPart: js.AeroPart,
+			IspSL: js.IspSL, IspVac: js.IspVac, AeroPart: js.AeroPart,
 		}
 		cum += js.BurnTime
 		frame, err := stageFrame(js.Steering)
