@@ -52,8 +52,14 @@ func ispPressure(st Stage, p float64) float64 {
 // part and body pitch ϑ. Y and Mz carry the sign of the angle of attack; X ≥ 0.
 // In vacuum (ρ=0) all three are zero.
 func AeroForces(at *AeroTable, part string, pitch float64, y []float64) (X, Y, Mz float64) {
-	H := Altitude(y)
-	_, rho, _, _, _, a := atmosphere.Atmosphere(H)
+	_, rho, _, _, _, a := atmosphere.Atmosphere(Altitude(y))
+	return aeroForcesWith(at, part, pitch, y, rho, a)
+}
+
+// aeroForcesWith is AeroForces with the atmosphere (ρ, speed of sound) already
+// evaluated, so a caller that needs the atmosphere for other terms too — or has
+// it at hand anyway — pays for one lookup instead of several.
+func aeroForcesWith(at *AeroTable, part string, pitch float64, y []float64, rho, a float64) (X, Y, Mz float64) {
 	if rho <= 0 {
 		return 0, 0, 0
 	}
@@ -78,8 +84,9 @@ func AeroForces(at *AeroTable, part string, pitch float64, y []float64) (X, Y, M
 func (r Rocket) activeAccel(st Stage, at *AeroTable, x float64, y []float64) (ax, ay float64) {
 	th := FlightAngle(y)
 	pit := r.Pitch.Cmd(x, th)
-	X, Y, _ := AeroForces(at, st.AeroPart, pit, y)
-	P := thrustOf(st, y)
+	_, rho, p, _, _, a := atmosphere.Atmosphere(Altitude(y))
+	X, Y, _ := aeroForcesWith(at, st.AeroPart, pit, y, rho, a)
+	P := thrustWith(st, p)
 	gx, gy := gravity(y)
 	m := y[iM]
 	ax = (P*math.Cos(pit)-X*math.Cos(th)-Y*math.Sin(th))/m + gx
@@ -182,8 +189,7 @@ func (r Rocket) passiveSystem(at *AeroTable) na.FuncSystem {
 	}
 }
 
-// thrustOf returns engine thrust P = Isp(p)·β·g0 at the current altitude.
-func thrustOf(st Stage, y []float64) float64 {
-	_, _, p, _, _, _ := atmosphere.Atmosphere(Altitude(y))
+// thrustWith returns engine thrust P = Isp(p)·β·g0 at ambient pressure p.
+func thrustWith(st Stage, p float64) float64 {
 	return ispPressure(st, p) * st.MassFlow() * G0
 }

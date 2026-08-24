@@ -228,7 +228,7 @@ func rowFrom(r Rocket, at *AeroTable, t float64, y []float64, st *Stage, part st
 		pit = theta // velocity-aligned payload ⇒ α=0
 		om = 0
 	}
-	X, Y, Mz := AeroForces(at, part, pit, y)
+	X, Y, Mz := aeroForcesWith(at, part, pit, y, rho, a)
 	return Row{
 		T: t, M: y[iM], Vx: y[iVx], Vy: y[iVy], Xpos: y[iX], Ypos: y[iY],
 		H: H, V: V, Pitch: pit, Theta: theta, Alpha: pit - theta,
