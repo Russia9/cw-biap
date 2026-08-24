@@ -76,8 +76,8 @@ func AeroForces(at *AeroTable, part string, pitch float64, y []float64) (X, Y, M
 // magnitude follows ρ(H), so the atmosphere/vacuum split is automatic) and
 // gravity. Shared by the dVx/dVy components so both read the same forces.
 func (r Rocket) activeAccel(st Stage, at *AeroTable, x float64, y []float64) (ax, ay float64) {
-	pit := r.Pitch.Theta(x)
 	th := FlightAngle(y)
+	pit := r.Pitch.Cmd(x, th)
 	X, Y, _ := AeroForces(at, st.AeroPart, pit, y)
 	P := thrustOf(st, y)
 	gx, gy := gravity(y)
@@ -85,6 +85,18 @@ func (r Rocket) activeAccel(st Stage, at *AeroTable, x float64, y []float64) (ax
 	ax = (P*math.Cos(pit)-X*math.Cos(th)-Y*math.Sin(th))/m + gx
 	ay = (P*math.Sin(pit)-X*math.Sin(th)+Y*math.Cos(th))/m + gy
 	return ax, ay
+}
+
+// thetaDot returns the flight-path rate θ̇ = (Vx·ay − Vy·ax)/V² [rad/s] implied
+// by the translational acceleration (ax, ay). It closes the ϑ̇ bookkeeping for
+// FrameAlpha steering, where ϑ̇ = θ̇ + α̇_пр. There is no circularity: α_пр is
+// explicit in t, so ϑ → forces → θ̇ → ϑ̇ resolves in one forward pass.
+func thetaDot(y []float64, ax, ay float64) float64 {
+	v2 := y[iVx]*y[iVx] + y[iVy]*y[iVy]
+	if v2 <= 0 {
+		return 0
+	}
+	return (y[iVx]*ay - y[iVy]*ax) / v2
 }
 
 // activeSystem builds the powered-flight ODE system for one stage (5 states).

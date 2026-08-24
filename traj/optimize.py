@@ -4,11 +4,13 @@ Runs the Go simulator (traj/main) as a black box and tunes the pitch program so
 the simulated surface range hits a target (default 12000 km) while respecting the
 §4.4 constraints, which enter the objective as penalty terms.
 
-The base rocket (stage masses/thrust and the per-stage arc *shapes*) is read from
-rocket.json; the optimizer varies all configured pitch-arc terminal angles, the
-vertical-hold t_в [s], t_end for non-final arcs, and all per-arc shape exponents.
+The base rocket (stage masses/thrust, the per-stage arc *shapes* and each
+stage's steering frame) is read from rocket.json; the optimizer varies all
+configured pitch-arc terminal values, the vertical-hold t_в [s], t_end for
+non-final arcs, all per-arc shape exponents, and any frame-change entry angles.
 It writes a temporary config per evaluation. Switch an arc's "shape" in
-rocket.json to optimize that law for the arc.
+rocket.json to optimize that law for the arc, or a stage's "steering" to switch
+that stage between ϑ-framed and α-framed arcs.
 
 Usage:
     uv run python traj/optimize.py [--target 12000] [--maxiter 150]
@@ -19,6 +21,7 @@ import copy
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -26,7 +29,24 @@ import cma
 
 HERE = Path(__file__).parent
 BIN = HERE / "out" / "traj-sim"
-BASE_CONFIG = HERE / "rocket.json"
+
+
+def _base_config_path() -> Path:
+    """Resolve --config before argparse runs.
+
+    The arc layout (SPECS/SPLITS/ENTRIES below) is derived at import time from
+    the base config, so the path has to be known before main() parses argv.
+    """
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a == "--config" and i + 1 < len(argv):
+            return Path(argv[i + 1])
+        if a.startswith("--config="):
+            return Path(a.split("=", 1)[1])
+    return HERE / "rocket.json"
+
+
+BASE_CONFIG = _base_config_path()
 
 # CFD coefficient table passed to every simulator call, set from --aero. Empty
 # means the simulator runs with zero aerodynamics, which is the default.
@@ -45,8 +65,16 @@ AERO = ""
 # A one-sided penalty puts the optimum exactly on the constraint, so it lands
 # a hair either side of it. CON_MARGIN shrinks the limits during the search by
 # 0.1 % so the converged solution is strictly inside the reported limits.
+#
+# F_FAIL scores a run the simulator could not complete. CMA-ES ranks the
+# population rather than reading the values, so this only has to sort below
+# every real evaluation — and a real one is not bounded: W_CON times a large
+# relative excess reaches 1e10 easily. A sentinel inside that range would make
+# the search prefer configs that fail outright over configs that merely violate
+# a limit, which is how a plain 1e9 stalled the α runs at their starting point.
 SCALE_L = 100.0
 W_CON = 1.0e7
+F_FAIL = 1.0e15
 CON_MARGIN = 1.0e-3
 W_MONO = 10.0
 W_TIME = 1000.0
@@ -65,6 +93,15 @@ def build() -> None:
 
 def arc_shape(arc: dict) -> str:
     return arc.get("shape") or "exp"
+
+
+def stage_frame(stage: dict) -> str:
+    """Steering frame of a stage: "theta" (arcs are ϑ) or "alpha" (arcs are α)."""
+    return stage.get("steering") or "theta"
+
+
+def angle_key(frame: str) -> str:
+    return "alpha_deg" if frame == "alpha" else "theta_deg"
 
 
 def arc_k(arc: dict) -> float:
@@ -87,6 +124,7 @@ def arc_specs() -> list[dict]:
                     "stage_start": stage_start,
                     "stage_end": stage_end,
                     "is_final": ai == len(st["pitch"]) - 1,
+                    "frame": stage_frame(st),
                 }
             )
         stage_start = stage_end
@@ -99,13 +137,19 @@ SPECS = arc_specs()
 SPLITS = [sp for sp in SPECS if not sp["is_final"]]
 
 
-def vector_dim() -> int:
-    """Length of the CMA-ES vector: angles, t_в, non-final t_end values, ks."""
-    return 2 * len(SPECS) + 1 + len(SPLITS)
-
-
 def base_arc(sp: dict) -> dict:
     return _BASE["stages"][sp["stage"]]["pitch"][sp["arc"]]
+
+
+# Arcs carrying an explicit entry pitch, which a stage needs when it switches
+# steering frame. Their continuity with the preceding arc is not structural, so
+# the objective penalises the resulting ϑ jump via max_pitch_rate_num_dps.
+ENTRIES = [sp for sp in SPECS if "theta0_deg" in base_arc(sp)]
+
+
+def vector_dim() -> int:
+    """Angles, t_в, non-final t_end values, ks, then frame-change entry angles."""
+    return 2 * len(SPECS) + 1 + len(SPLITS) + len(ENTRIES)
 
 
 def default_x0() -> list[float]:
@@ -115,7 +159,7 @@ def default_x0() -> list[float]:
     ks = []
     for sp in specs:
         arc = base_arc(sp)
-        angles.append(arc["theta_deg"])
+        angles.append(arc[angle_key(sp["frame"])])
         ks.append(arc_k(arc))
         if not sp["is_final"]:
             split_times.append(
@@ -123,7 +167,8 @@ def default_x0() -> list[float]:
             )
     if len(split_times) != len(splits):
         raise RuntimeError("internal optimizer layout mismatch")
-    return [*angles, _BASE["t_vertical"], *split_times, *ks]
+    entries = [base_arc(sp)["theta0_deg"] for sp in ENTRIES]
+    return [*angles, _BASE["t_vertical"], *split_times, *ks, *entries]
 
 
 def unpack_x(x):
@@ -135,21 +180,24 @@ def unpack_x(x):
     angles = list(x[:n_arcs])
     t_vertical = float(x[n_arcs])
     split_times = list(x[n_arcs + 1 : n_arcs + 1 + n_splits])
-    ks = list(x[n_arcs + 1 + n_splits :])
-    return specs, splits, angles, t_vertical, split_times, ks
+    ks = list(x[n_arcs + 1 + n_splits : 2 * n_arcs + 1 + n_splits])
+    entries = list(x[2 * n_arcs + 1 + n_splits :])
+    return specs, splits, angles, t_vertical, split_times, ks, entries
 
 
 def config_from_x(x) -> dict:
     """Map the CMA-ES vector onto a rocket config (arc shapes kept from base)."""
-    specs, splits, angles, t_vertical, split_times, ks = unpack_x(x)
+    specs, splits, angles, t_vertical, split_times, ks, entries = unpack_x(x)
     c = copy.deepcopy(_BASE)
     c["t_vertical"] = t_vertical
-    for sp, theta, k in zip(specs, angles, ks):
+    for sp, angle, k in zip(specs, angles, ks):
         c["stages"][sp["stage"]]["pitch"][sp["arc"]].update(
-            {"theta_deg": theta, "k": k}
+            {angle_key(sp["frame"]): angle, "k": k}
         )
     for sp, t_end in zip(splits, split_times):
         c["stages"][sp["stage"]]["pitch"][sp["arc"]]["t_end"] = t_end
+    for sp, entry in zip(ENTRIES, entries):
+        c["stages"][sp["stage"]]["pitch"][sp["arc"]]["theta0_deg"] = entry
     return c
 
 
@@ -157,23 +205,42 @@ def k_lower_bounds() -> list[float]:
     return [1.0 if arc_shape(base_arc(sp)) == "cos" else -8.0 for sp in SPECS]
 
 
+# Angle bounds per steering frame. ϑ arcs sweep the whole powered turn; α arcs
+# only ever need to reach a little past the §4.4 supersonic limit of 10 deg, and
+# a small positive α must stay reachable for the pitch-over.
+ANGLE_BOUNDS = {"theta": (5.0, 89.0), "alpha": (-12.0, 3.0)}
+
+
+def angle_bounds() -> tuple[list[float], list[float]]:
+    lo, hi = zip(*(ANGLE_BOUNDS[sp["frame"]] for sp in SPECS))
+    return list(lo), list(hi)
+
+
 def bounds() -> list[list[float]]:
     n_arcs = len(SPECS)
+    n_entries = len(ENTRIES)
+    angle_low, angle_high = angle_bounds()
     split_low = [sp["stage_start"] + 1.0 for sp in SPLITS]
     split_high = [sp["stage_end"] - 0.1 for sp in SPLITS]
     return [
-        [*([5.0] * n_arcs), 5.0, *split_low, *k_lower_bounds()],
-        [*([89.0] * n_arcs), 40.0, *split_high, *([8.0] * n_arcs)],
+        [*angle_low, 5.0, *split_low, *k_lower_bounds(), *([0.0] * n_entries)],
+        [*angle_high, 40.0, *split_high, *([8.0] * n_arcs), *([89.0] * n_entries)],
     ]
 
 
 def cma_stds() -> list[float]:
     n_arcs = len(SPECS)
-    return [*([10.0] * n_arcs), 8.0, *([8.0] * len(SPLITS)), *([3.0] * n_arcs)]
+    return [
+        *([10.0] * n_arcs),
+        8.0,
+        *([8.0] * len(SPLITS)),
+        *([3.0] * n_arcs),
+        *([8.0] * len(ENTRIES)),
+    ]
 
 
 def end_times_from_x(x) -> list[float]:
-    specs, splits, _angles, _t_vertical, split_times, _ks = unpack_x(x)
+    specs, splits, _angles, _t_vertical, split_times, _ks, _entries = unpack_x(x)
     split_by_ref = {
         (sp["stage"], sp["arc"]): t_end for sp, t_end in zip(splits, split_times)
     }
@@ -184,7 +251,7 @@ def end_times_from_x(x) -> list[float]:
 
 
 def program_penalty(x) -> float:
-    _specs, _splits, angles, t_vertical, _split_times, _ks = unpack_x(x)
+    specs, _splits, angles, t_vertical, _split_times, _ks, _entries = unpack_x(x)
     ends = end_times_from_x(x)
     f = 0.0
 
@@ -194,27 +261,32 @@ def program_penalty(x) -> float:
         prev = end
 
     # Keep the program physical: expect pitch terminal angles to decrease with
-    # time across the flattened powered program.
+    # time across the flattened powered program. α arcs are exempt — α is a
+    # deviation from the flight path, not a monotone attitude, and it has to be
+    # free to relax back toward zero as the atmosphere thins.
     f += W_MONO * sum(
-        max(0.0, angles[i + 1] - angles[i]) ** 2 for i in range(len(angles) - 1)
+        max(0.0, angles[i + 1] - angles[i]) ** 2
+        for i in range(len(angles) - 1)
+        if specs[i]["frame"] == "theta" and specs[i + 1]["frame"] == "theta"
     )
     return f
 
 
 def format_params(x) -> str:
-    specs, splits, angles, t_vertical, split_times, ks = unpack_x(x)
+    specs, splits, angles, t_vertical, split_times, ks, entries = unpack_x(x)
     split_by_ref = {
         (sp["stage"], sp["arc"]): t_end for sp, t_end in zip(splits, split_times)
     }
+    entry_by_ref = {(sp["stage"], sp["arc"]): e for sp, e in zip(ENTRIES, entries)}
     lines = [f"t_в={t_vertical:.3f} s"]
-    for sp, theta, k in zip(specs, angles, ks):
-        shape = arc_shape(base_arc(sp))
-        t_end = ""
-        if not sp["is_final"]:
-            t_end = f", t_end={split_by_ref[(sp['stage'], sp['arc'])]:.3f} s"
+    for sp, angle, k in zip(specs, angles, ks):
+        ref = (sp["stage"], sp["arc"])
+        sym = "α" if sp["frame"] == "alpha" else "ϑ"
+        t_end = "" if sp["is_final"] else f", t_end={split_by_ref[ref]:.3f} s"
+        entry = f", ϑ0={entry_by_ref[ref]:.3f} deg" if ref in entry_by_ref else ""
         lines.append(
-            f"s{sp['stage'] + 1}a{sp['arc'] + 1}: ϑ={theta:.3f} deg, "
-            f"shape={shape}, k={k:.3f}{t_end}"
+            f"s{sp['stage'] + 1}a{sp['arc'] + 1}: {sym}={angle:.3f} deg, "
+            f"shape={arc_shape(base_arc(sp))}, k={k:.3f}{t_end}{entry}"
         )
     return "\n  ".join(lines)
 
@@ -232,7 +304,12 @@ def run_sim(x, h, metrics=True, out=None):
             cmd.append("-metrics")
         if out is not None:
             cmd.append(f"-out={out}")
-        return subprocess.run(cmd, cwd=HERE, capture_output=True, text=True, check=True)
+        # A normal evaluation takes ~40 ms. The timeout is a backstop against a
+        # pathological config the simulator cannot resolve; objective() scores
+        # the resulting TimeoutExpired as infeasible.
+        return subprocess.run(
+            cmd, cwd=HERE, capture_output=True, text=True, check=True, timeout=60
+        )
     finally:
         os.unlink(cfg_path)
 
@@ -246,8 +323,13 @@ def objective(x, target_km, h) -> float:
     f_prog = program_penalty(x)
     try:
         m = metrics(x, h)
-    except (subprocess.CalledProcessError, json.JSONDecodeError, IndexError):
-        return 1e9 + f_prog  # infeasible / failed run
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+        IndexError,
+    ):
+        return F_FAIL + f_prog  # infeasible / failed run
 
     f = f_prog + ((m["impact_range_km"] - target_km) / SCALE_L) ** 2
 
@@ -257,7 +339,15 @@ def objective(x, target_km, h) -> float:
     f += W_CON * pen(m["max_alpha_sub_deg"], m["lim_eps1"])
     f += W_CON * pen(m["max_alpha_sup_deg"], m["lim_eps2"])
     f += W_CON * pen(m["max_pitch_rate_dps"], m["lim_theta_dot"])
+    # The analytic rate is sampled on the integration grid and aliases peaks
+    # between samples; the finite-difference rate across rows catches those, and
+    # a ϑ discontinuity at a steering-frame change shows up here as a huge value.
+    f += W_CON * pen(m["max_pitch_rate_num_dps"], m["lim_theta_dot"])
     f += W_CON * pen(m["max_q_pa"], m["lim_qmax"])
+    # Max trajectory ordinate. Guarded: pen() divides by the limit, so a config
+    # that does not set h_max would raise instead of skipping the term.
+    if m.get("lim_h_max_km", 0) > 0:
+        f += W_CON * pen(m["apogee_h_km"], m["lim_h_max_km"])
     return f
 
 
@@ -265,6 +355,16 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--target", type=float, default=12000.0, help="target surface range [km]"
+    )
+    ap.add_argument(
+        "--config",
+        default=str(HERE / "rocket.json"),
+        help="base rocket config: fixes the arc layout, shapes and steering frames",
+    )
+    ap.add_argument(
+        "--out-best",
+        default="out/best.json",
+        help="where to write the winning config, relative to traj/",
     )
     ap.add_argument("--maxiter", type=int, default=150, help="max CMA-ES iterations")
     ap.add_argument(
@@ -299,6 +399,8 @@ def main() -> None:
         ),
     )
     args = ap.parse_args()
+    if Path(args.config).resolve() != BASE_CONFIG.resolve():
+        raise SystemExit("internal: --config disagrees with the imported base config")
 
     global AERO
     if args.aero:
@@ -322,6 +424,8 @@ def main() -> None:
         "maxiter": args.maxiter,
         "verb_disp": 10,
         "seed": args.seed,
+        # Keyed to --out-best so concurrent runs do not share log files.
+        "verb_filenameprefix": f"outcmaes/{Path(args.out_best).stem}-",
     }
     es = cma.CMAEvolutionStrategy(x0, args.sigma0, opts)
     es.optimize(lambda x: objective(x, args.target, args.h_opt))
@@ -331,13 +435,14 @@ def main() -> None:
 
     # Persist the best config before anything that can fail, so a broken final
     # run never discards the whole search.
-    best_path = HERE / "out" / "best.json"
-    best_path.parent.mkdir(exist_ok=True)
+    best_path = HERE / args.out_best
+    best_path.parent.mkdir(parents=True, exist_ok=True)
     with open(best_path, "w") as f:
         json.dump(config_from_x(best), f, indent=2)
     print(f"wrote best config -> {best_path}")
     print(
-        f"run command:\n  ./out/traj-sim -config=out/best.json -h={args.h_final} -out=out/traj.csv"
+        f"run command:\n  ./out/traj-sim -config={args.out_best} "
+        f"-h={args.h_final} -out=out/traj.csv"
     )
 
     try:
@@ -354,8 +459,10 @@ def main() -> None:
         "constraints      : "
         f"|α|sub={m['max_alpha_sub_deg']:.2f}/{m['lim_eps1']:.2f} "
         f"|α|sup={m['max_alpha_sup_deg']:.2f}/{m['lim_eps2']:.2f} "
-        f"ϑ̇={m['max_pitch_rate_dps']:.2f}/{m['lim_theta_dot']:.2f} "
-        f"q={m['max_q_pa'] / 1000:.1f}/{m['lim_qmax'] / 1000:.0f} kPa"
+        f"ϑ̇={m['max_pitch_rate_dps']:.2f}~{m['max_pitch_rate_num_dps']:.2f}"
+        f"/{m['lim_theta_dot']:.2f} "
+        f"q={m['max_q_pa'] / 1000:.1f}/{m['lim_qmax'] / 1000:.0f} kPa "
+        f"H={m['apogee_h_km']:.0f}/{m.get('lim_h_max_km', 0):.0f} km"
     )
 
     # Final fine-step run: writes out/traj.csv and prints the full diagnostics.

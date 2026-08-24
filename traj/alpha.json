@@ -1,0 +1,87 @@
+{
+  "payload_mass": 620,
+  "payload_part": "head",
+  "t_vertical": 5.0,
+  "stages": [
+    {
+      "m0": 29724,
+      "m_fuel": 20021,
+      "burn_time": 66.3,
+      "isp_sl": 225.7,
+      "isp_vac": 252.747,
+      "dm": 1.58,
+      "part": "all",
+      "pitch": [
+        {
+          "t_end": 23.0,
+          "alpha_deg": -1.3,
+          "shape": "cos",
+          "k": 1.1
+        },
+        {
+          "t_end": 35.0,
+          "alpha_deg": -9.5,
+          "shape": "cos",
+          "k": 1.1
+        },
+        {
+          "alpha_deg": -9.5,
+          "shape": "cos",
+          "k": 1.1
+        }
+      ],
+      "steering": "alpha"
+    },
+    {
+      "m0": 8445,
+      "m_fuel": 5688,
+      "burn_time": 42.9,
+      "isp_sl": 221.493,
+      "isp_vac": 265.751,
+      "dm": 1.16,
+      "part": "stage2up",
+      "pitch": [
+        {
+          "t_end": 102.0,
+          "alpha_deg": -9.5,
+          "shape": "cos",
+          "k": 1.1
+        },
+        {
+          "alpha_deg": -7.0,
+          "shape": "cos",
+          "k": 1.1
+        }
+      ],
+      "steering": "alpha"
+    },
+    {
+      "m0": 2375,
+      "m_fuel": 1600,
+      "burn_time": 30.6,
+      "isp_sl": 221.493,
+      "isp_vac": 275.219,
+      "dm": 0.83,
+      "part": "stage3up",
+      "pitch": [
+        {
+          "t_end": 125.0,
+          "theta_deg": 15.0,
+          "shape": "cos",
+          "k": 1.1
+        },
+        {
+          "theta_deg": 12.2,
+          "shape": "cos",
+          "k": 1.1
+        }
+      ]
+    }
+  ],
+  "limits": {
+    "eps1": 1.5,
+    "eps2": 10.0,
+    "theta_dot_max": 3.0,
+    "qmax": 120000
+  }
+}

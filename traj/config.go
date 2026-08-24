@@ -73,6 +73,7 @@ type Limits struct {
 	Eps2        float64 `json:"eps2"`          // |α| limit for M > 1.1 and H ≤ Hatm [deg]
 	ThetaDotMax float64 `json:"theta_dot_max"` // |ϑ̇| limit [deg/s]
 	Qmax        float64 `json:"qmax"`          // dynamic-pressure limit [Pa]
+	HMax        float64 `json:"h_max"`         // max trajectory ordinate (apogee) [m]; 0 disables
 }
 
 // Rocket bundles the full configuration handed to the simulator: the stage

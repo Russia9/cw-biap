@@ -36,6 +36,7 @@ type Diagnostics struct {
 	MaxAlphaSub            float64 // max |α| for M ≤ 1.1 [deg]
 	MaxAlphaSup            float64 // max |α| for M > 1.1 and H ≤ Hatm [deg]
 	MaxPitchRate           float64 // max |ϑ̇| on the active leg [deg/s]
+	MaxPitchRateNum        float64 // max |Δϑ/Δt| between active rows [deg/s]
 	PitchRateSep1          float64 // |ϑ̇| at stage-1 separation [deg/s]
 	PitchRateSep2          float64 // |ϑ̇| at stage-2 separation [deg/s]
 	CrossUpTime, CrossUpH  float64 // 94 km crossing, ascending
@@ -45,6 +46,7 @@ type Diagnostics struct {
 	BurnoutH, BurnoutTheta float64
 	ApogeeT, ApogeeH       float64
 	ImpactT, ImpactRange   float64
+	GroundHitStage         int // >0 if that powered stage reached the ground
 }
 
 // passiveMaxDuration caps the coast/re-entry leg [s] in case the payload never
@@ -61,13 +63,28 @@ func Simulate(r Rocket, at *AeroTable, h float64) ([]Row, Diagnostics, error) {
 	t0 := 0.0
 	tk := r.BurnoutTimes()
 
+	// latchFrameEntry writes into the program, so work on a private copy.
+	segs := make([]PitchSegment, len(r.Pitch.Segments))
+	copy(segs, r.Pitch.Segments)
+	r.Pitch.Segments = segs
+
 	for i, st := range r.Stages {
+		r.latchFrameEntry(t0, state)
 		stageRows, end, err := r.simulateStage(at, st, i, t0, tk[i], state, h)
 		if err != nil {
 			return nil, Diagnostics{}, err
 		}
 		rows = append(rows, stageRows...)
 		state = end
+		if Altitude(state) < 0 {
+			// Flew into the ground under power. The flight ends there: the
+			// remaining stages never burn and the last row is the impact. This
+			// scores as a very short range rather than an error, which keeps
+			// the optimizer's objective continuous across the boundary.
+			d := diagnose(r, rows, tk)
+			d.GroundHitStage = i + 1
+			return rows, d, nil
+		}
 		if i < len(r.Stages)-1 {
 			state[iM] = r.Stages[i+1].M0 // drop spent stage, expose next sub-rocket
 		} else {
@@ -85,6 +102,32 @@ func Simulate(r Rocket, at *AeroTable, h float64) ([]Row, Diagnostics, error) {
 	return rows, diagnose(r, rows, tk), nil
 }
 
+// latchFrameEntry fixes the entry value of a steering-frame change occurring at
+// time t, so the commanded ϑ is continuous across it.
+//
+// A ϑ arc following an α arc has to start from θ(t) + α, and an α arc following
+// a ϑ arc from ϑ − θ(t); both depend on the flight-path angle, which is a state
+// and so cannot be written into the config ahead of time. Steering is selected
+// per stage, so a frame change only ever falls on a stage boundary, where
+// Simulate holds the state. An explicit theta0_deg in the config wins.
+func (r Rocket) latchFrameEntry(t float64, state []float64) {
+	for i := 1; i < len(r.Pitch.Segments); i++ {
+		s := &r.Pitch.Segments[i]
+		if s.Entry != nil || s.Frame == r.Pitch.Segments[i-1].Frame {
+			continue
+		}
+		if math.Abs(r.Pitch.Segments[i-1].TEnd-t) > 1e-9 {
+			continue // this change belongs to a different stage boundary
+		}
+		theta := FlightAngle(state)
+		v := r.Pitch.Cmd(t, theta) // the outgoing frame's ϑ at the joint
+		if s.Frame == FrameAlpha {
+			v -= theta
+		}
+		s.Entry = &v
+	}
+}
+
 // simulateStage integrates one powered stage from t0 to tEnd and returns its
 // trajectory rows and the final state vector (5 states).
 func (r Rocket) simulateStage(at *AeroTable, st Stage, i int, t0, tEnd float64, state []float64, h float64) ([]Row, []float64, error) {
@@ -93,7 +136,7 @@ func (r Rocket) simulateStage(at *AeroTable, st Stage, i int, t0, tEnd float64, 
 	if err != nil {
 		return nil, nil, err
 	}
-	rows := appendRows(r, at, res, st.AeroPart, i+1, true, i > 0)
+	rows := appendRows(r, at, res, &st, st.AeroPart, i+1, i > 0)
 	return rows, finalState(res), nil
 }
 
@@ -106,12 +149,17 @@ func (r Rocket) simulatePassive(at *AeroTable, t0 float64, state []float64, h fl
 	if err != nil {
 		return nil, err
 	}
-	return appendRows(r, at, res, r.PayloadPart, 4, false, true), nil
+	return appendRows(r, at, res, nil, r.PayloadPart, 4, true), nil
 }
 
+// stopAtTime ends a powered stage at its burnout time, or earlier if the vehicle
+// reaches the ground. Without the altitude guard a steering program that pitches
+// past the horizon keeps integrating underground for the rest of the burn and
+// hands the passive leg a sub-surface initial state, which its ground-stop
+// bisection cannot resolve. H is exactly 0 at lift-off, so the test is strict.
 func stopAtTime(tEnd float64) func(x float64, y ...float64) (bool, bool) {
-	return func(x float64, _ ...float64) (bool, bool) {
-		done := x >= tEnd-1e-9
+	return func(x float64, y ...float64) (bool, bool) {
+		done := x >= tEnd-1e-9 || Altitude(y) < 0
 		return done, done
 	}
 }
@@ -136,9 +184,10 @@ func finalState(res [][]na.Point2D) []float64 {
 	return s
 }
 
-// appendRows converts an RK result into trajectory rows. skipFirst drops the
+// appendRows converts an RK result into trajectory rows. st is the powered
+// stage the rows belong to, or nil on the passive leg. skipFirst drops the
 // leading step to avoid duplicating the time shared with the previous segment.
-func appendRows(r Rocket, at *AeroTable, res [][]na.Point2D, part string, stage int, active, skipFirst bool) []Row {
+func appendRows(r Rocket, at *AeroTable, res [][]na.Point2D, st *Stage, part string, stage int, skipFirst bool) []Row {
 	var rows []Row
 	d := len(res)
 	n := len(res[0])
@@ -152,12 +201,12 @@ func appendRows(r Rocket, at *AeroTable, res [][]na.Point2D, part string, stage 
 		for i := 0; i < d; i++ {
 			y[i] = res[i][k].Y
 		}
-		rows = append(rows, rowFrom(r, at, t, y, part, stage, active))
+		rows = append(rows, rowFrom(r, at, t, y, st, part, stage))
 	}
 	return rows
 }
 
-func rowFrom(r Rocket, at *AeroTable, t float64, y []float64, part string, stage int, active bool) Row {
+func rowFrom(r Rocket, at *AeroTable, t float64, y []float64, st *Stage, part string, stage int) Row {
 	H := Altitude(y)
 	V := VelMag(y)
 	theta := FlightAngle(y)
@@ -169,9 +218,12 @@ func rowFrom(r Rocket, at *AeroTable, t float64, y []float64, part string, stage
 	q := 0.5 * rho * V * V
 
 	var pit, om float64
-	if active {
-		pit = r.Pitch.Theta(t)
-		om = r.Pitch.Rate(t)
+	if st != nil {
+		// ϑ̇ needs θ̇, which needs the forces, which need ϑ — but ϑ never
+		// depends on ϑ̇, so one forward evaluation closes the loop.
+		ax, ay := r.activeAccel(*st, at, t, y)
+		pit = r.Pitch.Cmd(t, theta)
+		om = r.Pitch.Rate(t, thetaDot(y, ax, ay))
 	} else {
 		pit = theta // velocity-aligned payload ⇒ α=0
 		om = 0
@@ -191,20 +243,22 @@ func surfaceRange(x, y float64) float64 {
 
 func diagnose(r Rocket, rows []Row, tk []float64) Diagnostics {
 	d := Diagnostics{}
-	// Separation rates are only defined where a staging event exists; a
-	// single-stage config has neither.
-	if len(tk) > 1 {
-		d.PitchRateSep1 = math.Abs(r.Pitch.Rate(tk[0])) * r2d
-	}
-	if len(tk) > 2 {
-		d.PitchRateSep2 = math.Abs(r.Pitch.Rate(tk[1])) * r2d
-	}
-
 	lastActive := len(r.Stages) // stage index of the final powered stage
+	sepOmega := make([]float64, lastActive)
 	crossedUp := false
 	prevH := 0.0
+	// Previous active row, for the finite-difference pitch rate.
+	prevT, prevPitch := 0.0, 0.0
+	havePrev := false
 	for i, row := range rows {
 		if row.Stage <= lastActive { // active leg — the §4.4 checks apply here
+			// Last active row of a stage sits exactly at its burnout time.
+			sepOmega[row.Stage-1] = row.Omega
+			if havePrev && row.T > prevT {
+				rate := math.Abs(row.Pitch-prevPitch) / (row.T - prevT) * r2d
+				d.MaxPitchRateNum = math.Max(d.MaxPitchRateNum, rate)
+			}
+			prevT, prevPitch, havePrev = row.T, row.Pitch, true
 			if row.Q > d.MaxQ {
 				d.MaxQ, d.MaxQt = row.Q, row.T
 			}
@@ -231,6 +285,15 @@ func diagnose(r Rocket, rows []Row, tk []float64) Diagnostics {
 			d.ApogeeH, d.ApogeeT = row.H, row.T
 		}
 		prevH = row.H
+	}
+
+	// Separation rates are only defined where a staging event exists; a
+	// single-stage config has neither.
+	if len(tk) > 1 {
+		d.PitchRateSep1 = math.Abs(sepOmega[0]) * r2d
+	}
+	if len(tk) > 2 {
+		d.PitchRateSep2 = math.Abs(sepOmega[1]) * r2d
 	}
 
 	// Burnout = last active row (final stage, at its burnout time).

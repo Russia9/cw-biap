@@ -43,21 +43,24 @@ func WriteCSV(rows []Row, path string, decimate int) error {
 // machine-readable interface consumed by the CMA-ES optimizer (optimize.py).
 func MetricsJSON(d Diagnostics, lim Limits) string {
 	m := map[string]float64{
-		"impact_range_km":    d.ImpactRange / 1000,
-		"impact_t_s":         d.ImpactT,
-		"apogee_h_km":        d.ApogeeH / 1000,
-		"apogee_t_s":         d.ApogeeT,
-		"burnout_v":          d.BurnoutV,
-		"burnout_h_km":       d.BurnoutH / 1000,
-		"burnout_theta_deg":  d.BurnoutTheta,
-		"max_alpha_sub_deg":  d.MaxAlphaSub,
-		"max_alpha_sup_deg":  d.MaxAlphaSup,
-		"max_pitch_rate_dps": d.MaxPitchRate,
-		"max_q_pa":           d.MaxQ,
-		"lim_eps1":           lim.Eps1,
-		"lim_eps2":           lim.Eps2,
-		"lim_theta_dot":      lim.ThetaDotMax,
-		"lim_qmax":           lim.Qmax,
+		"impact_range_km":        d.ImpactRange / 1000,
+		"impact_t_s":             d.ImpactT,
+		"apogee_h_km":            d.ApogeeH / 1000,
+		"apogee_t_s":             d.ApogeeT,
+		"burnout_v":              d.BurnoutV,
+		"burnout_h_km":           d.BurnoutH / 1000,
+		"burnout_theta_deg":      d.BurnoutTheta,
+		"max_alpha_sub_deg":      d.MaxAlphaSub,
+		"max_alpha_sup_deg":      d.MaxAlphaSup,
+		"max_pitch_rate_dps":     d.MaxPitchRate,
+		"max_pitch_rate_num_dps": d.MaxPitchRateNum,
+		"max_q_pa":               d.MaxQ,
+		"lim_h_max_km":           lim.HMax / 1000,
+		"ground_hit_stage":       float64(d.GroundHitStage),
+		"lim_eps1":               lim.Eps1,
+		"lim_eps2":               lim.Eps2,
+		"lim_theta_dot":          lim.ThetaDotMax,
+		"lim_qmax":               lim.Qmax,
 	}
 	b, _ := json.Marshal(m)
 	return string(b)
@@ -77,10 +80,17 @@ func PrintDiagnostics(d Diagnostics, lim Limits, at *AeroTable) {
 	fmt.Printf("  max |α|, M≤1.1            : %6.2f deg   (limit %.2f)  %s\n", d.MaxAlphaSub, lim.Eps1, okFlag(d.MaxAlphaSub, lim.Eps1))
 	fmt.Printf("  max |α|, M>1.1 & H≤94km   : %6.2f deg   (limit %.2f)  %s\n", d.MaxAlphaSup, lim.Eps2, okFlag(d.MaxAlphaSup, lim.Eps2))
 	fmt.Printf("  max |ϑ̇| (active)          : %6.2f deg/s (limit %.2f)  %s\n", d.MaxPitchRate, lim.ThetaDotMax, okFlag(d.MaxPitchRate, lim.ThetaDotMax))
+	fmt.Printf("  max |Δϑ/Δt| (active rows) : %6.2f deg/s (limit %.2f)  %s\n", d.MaxPitchRateNum, lim.ThetaDotMax, okFlag(d.MaxPitchRateNum, lim.ThetaDotMax))
 	fmt.Printf("  |ϑ̇| at stage-1 sep        : %6.3f deg/s (≈0 for smooth separation)\n", d.PitchRateSep1)
 	fmt.Printf("  |ϑ̇| at stage-2 sep        : %6.3f deg/s (≈0 for smooth separation)\n", d.PitchRateSep2)
 	fmt.Printf("  max q                     : %8.1f Pa  (limit %.0f)  %s\n", d.MaxQ, lim.Qmax, okFlag(d.MaxQ, lim.Qmax))
 	fmt.Printf("  (max q at t = %.1f s)\n", d.MaxQt)
+	// Only reported when configured: okFlag treats a zero limit as exceeded, so
+	// a config without h_max must not print this line at all.
+	if lim.HMax > 0 {
+		fmt.Printf("  max ordinate (apogee)     : %6.1f km  (limit %.1f)  %s\n",
+			d.ApogeeH/1000, lim.HMax/1000, okFlag(d.ApogeeH, lim.HMax))
+	}
 
 	fmt.Println("=== Atmosphere boundary (94 km) ===")
 	if d.CrossUpStage > 0 {
@@ -90,6 +100,10 @@ func PrintDiagnostics(d Diagnostics, lim Limits, at *AeroTable) {
 	}
 	if d.CrossDownTime > 0 {
 		fmt.Printf("  crossing DOWN : t=%.1f s\n", d.CrossDownTime)
+	}
+
+	if d.GroundHitStage > 0 {
+		fmt.Printf("  NOTE: stage %d reached the ground under power; the flight ends there\n", d.GroundHitStage)
 	}
 
 	fmt.Println("=== Terminal parameters ===")
