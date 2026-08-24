@@ -20,6 +20,7 @@ import argparse
 import copy
 import json
 import os
+import pickle
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -61,6 +62,11 @@ W_TIME = 1000.0
 # these same defaults to arcs that leave "k" unset.
 DEFAULT_K_EXP = 3.0
 DEFAULT_K_COS = 1.1
+
+# The CMA-ES state is checkpointed every this many iterations (matching the
+# verb_disp progress cadence), so an interrupted search resumes via --resume
+# instead of being discarded.
+CHECKPOINT_EVERY = 10
 
 # Angle bounds per steering frame. ϑ arcs sweep the whole powered turn; α arcs
 # only ever need to reach a little past the §4.4 supersonic limit of 10 deg, and
@@ -474,6 +480,15 @@ def parse_args() -> argparse.Namespace:
             "angles [deg]; defaults from rocket.json"
         ),
     )
+    ap.add_argument(
+        "--resume",
+        default="",
+        help=(
+            "path to a CMA-ES checkpoint (out/<stem>-cma.pkl) to continue an "
+            "interrupted or finished search; pass a larger --maxiter to extend. "
+            "--x0/--sigma0/--seed are ignored, the checkpoint carries them"
+        ),
+    )
     return ap.parse_args()
 
 
@@ -505,43 +520,76 @@ def main() -> None:
 
 
 def run_search(args: argparse.Namespace, layout: Layout, runner: SimRunner) -> None:
-    x0 = args.x0 if args.x0 is not None else layout.default_x0()
     expected = layout.vector_dim()
-    if len(x0) != expected:
-        raise SystemExit(
-            f"--x0 must contain {expected} values for this config, got {len(x0)}"
-        )
+    ckpt_path = HERE / "out" / f"{Path(args.out_best).stem}-cma.pkl"
 
-    # A base config the simulator rejects outright would score every candidate
-    # F_FAIL and present the search with a flat, hopeless landscape; surface
-    # the actual error before spending hours on it.
-    try:
-        runner.metrics(layout.config_from_x(x0), args.h_opt)
-    except SimError as exc:
-        msg = f"the starting configuration does not simulate: {exc}"
-        if exc.stderr:
-            msg += f"\nsimulator stderr:\n{exc.stderr}"
-        raise SystemExit(msg) from exc
+    if args.resume:
+        # pickle is the only serialization cma offers for a live strategy
+        # (es.pickle_dumps); the checkpoint is a local file this same tool
+        # wrote, not untrusted input.
+        with open(args.resume, "rb") as f:
+            es = pickle.load(f)
+        if es.N != expected:
+            raise SystemExit(
+                f"checkpoint dimension {es.N} does not match this config's "
+                f"{expected} — it was made for a different arc layout"
+            )
+        es.opts.set({"maxiter": args.maxiter})
+        print(f"resumed CMA-ES state from {args.resume} at iteration {es.countiter}")
+    else:
+        x0 = args.x0 if args.x0 is not None else layout.default_x0()
+        if len(x0) != expected:
+            raise SystemExit(
+                f"--x0 must contain {expected} values for this config, got {len(x0)}"
+            )
 
-    # The cma logger resolves its prefix against the process cwd while the
-    # simulator runs with cwd=traj/; anchor it so the logs land in
-    # traj/outcmaes/ regardless of the launch directory.
-    outcmaes = HERE / "outcmaes"
-    outcmaes.mkdir(exist_ok=True)
+        # A base config the simulator rejects outright would score every
+        # candidate F_FAIL and present the search with a flat, hopeless
+        # landscape; surface the actual error before spending hours on it.
+        try:
+            runner.metrics(layout.config_from_x(x0), args.h_opt)
+        except SimError as exc:
+            msg = f"the starting configuration does not simulate: {exc}"
+            if exc.stderr:
+                msg += f"\nsimulator stderr:\n{exc.stderr}"
+            raise SystemExit(msg) from exc
 
-    # Per-dimension steps: angles [deg], t_в [s], t_end [s], k [-], entries
-    # [deg]. sigma0 scales all.
-    opts = {
-        "bounds": list(layout.bounds()),
-        "CMA_stds": layout.cma_stds(),
-        "maxiter": args.maxiter,
-        "verb_disp": 10,
-        "seed": args.seed,
-        # Keyed to --out-best so concurrent runs do not share log files.
-        "verb_filenameprefix": f"{outcmaes}/{Path(args.out_best).stem}-",
-    }
-    es = cma.CMAEvolutionStrategy(x0, args.sigma0, opts)
-    es.optimize(lambda x: objective(layout, runner, x, args.target, args.h_opt))
+        # The cma logger resolves its prefix against the process cwd while the
+        # simulator runs with cwd=traj/; anchor it so the logs land in
+        # traj/outcmaes/ regardless of the launch directory.
+        outcmaes = HERE / "outcmaes"
+        outcmaes.mkdir(exist_ok=True)
+
+        # Per-dimension steps: angles [deg], t_в [s], t_end [s], k [-], entries
+        # [deg]. sigma0 scales all.
+        opts = {
+            "bounds": list(layout.bounds()),
+            "CMA_stds": layout.cma_stds(),
+            "maxiter": args.maxiter,
+            "verb_disp": 10,
+            "seed": args.seed,
+            # Keyed to --out-best so concurrent runs do not share log files.
+            "verb_filenameprefix": f"{outcmaes}/{Path(args.out_best).stem}-",
+        }
+        es = cma.CMAEvolutionStrategy(x0, args.sigma0, opts)
+
+    def checkpoint(es_: Any) -> None:
+        """Atomically persist the strategy so Ctrl-C cannot discard the search."""
+        tmp = ckpt_path.with_suffix(".pkl.tmp")
+        tmp.write_bytes(es_.pickle_dumps())
+        tmp.replace(ckpt_path)
+
+    def on_iteration(es_: Any) -> None:
+        if es_.countiter % CHECKPOINT_EVERY == 0:
+            checkpoint(es_)
+
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"checkpoint every {CHECKPOINT_EVERY} iterations -> {ckpt_path}")
+    es.optimize(
+        lambda x: objective(layout, runner, x, args.target, args.h_opt),
+        callback=on_iteration,
+    )
+    checkpoint(es)  # the finished state stays resumable with a larger --maxiter
 
     best = es.result.xbest
     if best is None:
