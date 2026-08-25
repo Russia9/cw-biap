@@ -5,28 +5,26 @@ import (
 	"testing"
 )
 
-// The GOST 4401-81 audit instrument. It checks the model against the standard
-// it claims to implement, in three ways:
+// The GOST 4401-81 conformance test. It checks the model against the standard
+// it implements, in four ways:
 //
 //  1. Anchor reproduction: at the geometric altitude of each table row's
-//     geopotential anchor, the model must return the published T and P.
-//  2. Continuity: T and p must be continuous across every layer boundary
+//     geopotential anchor, the model must return the anchored T and P.
+//  2. Printed-table spot checks: values read manually from the printed
+//     GOST 4401-81 parameter tables (geometric-altitude rows, 2026-08 audit).
+//     These pinned down the two defects fixed then: layer selection by
+//     geometric height, and the 85 km row's lapse rate and pressure anchor.
+//  3. Continuity: T and p must be continuous across every layer boundary
 //     (the standard's piecewise-linear T(H') is continuous by construction).
-//  3. The 94 km handoff into the vacuum branch must be temperature-continuous.
-//
-// Currently skipped: (2) and (3) fail on HEAD because the layer is selected by
-// geometric h against geopotential anchors (atmosphere.go:67) and because the
-// 85 km row's Beta disagrees with the 94 km row. Un-skip during the physics
-// audit; after the fix this test stays green permanently.
+//  4. The 94 km handoff into the vacuum branch must be temperature-continuous.
 func TestGOSTAtmosphere(t *testing.T) {
-	t.Skip("audit instrument: un-skip in the physics-audit phase")
-
 	// geomOf inverts H' = R·h/(R+h): the geometric altitude of a geopotential one.
 	geomOf := func(H float64) float64 { return REarth * H / (REarth - H) }
 
 	t.Run("anchors", func(t *testing.T) {
-		// The published GOST 4401-81 layer anchors (geopotential height, K, Pa) —
-		// the same values the implementation's table carries.
+		// The GOST 4401-81 layer anchors (geopotential height, K, Pa). The
+		// 85000 anchor is the barometric continuation of the 71000 layer,
+		// confirmed against the printed tables (see the table in atmosphere.go).
 		anchors := []struct{ H, T, P float64 }{
 			{0, 288.150, 101325},
 			{11000, 216.650, 22632.0},
@@ -35,7 +33,7 @@ func TestGOSTAtmosphere(t *testing.T) {
 			{47000, 270.65, 110.906},
 			{51000, 270.65, 66.9384},
 			{71000, 214.65, 3.95639},
-			{85000, 186.65, 0.341546},
+			{85000, 186.65, 0.363409},
 		}
 		for _, a := range anchors {
 			h := geomOf(a.H)
@@ -56,6 +54,36 @@ func TestGOSTAtmosphere(t *testing.T) {
 		}
 		if math.Abs(a-340.294) > 0.01 {
 			t.Errorf("a(0) = %.4f, GOST 340.294 m/s", a)
+		}
+	})
+
+	t.Run("printed values", func(t *testing.T) {
+		// Read manually from the printed GOST 4401-81 tables (rows indexed by
+		// geometric altitude) during the 2026-08 audit. A zero means the value
+		// was not read. The T rows discriminate the layer-selection rule; the
+		// p rows above 85 km discriminate the isothermal layer and its anchor
+		// (the pre-audit code was ~6 % low there).
+		printed := []struct{ h, T, P float64 }{
+			{20050, 216.650, 0},
+			{32100, 228.589, 0},
+			{47200, 270.236, 0},
+			{71400, 215.751, 0},
+			{85000, 0, 0.445710},
+			{85500, 0, 0.4080},
+			{86000, 0, 0.373380},
+			{86500, 0, 0.341546},
+			{88000, 186.650, 0.261501},
+			{90000, 186.650, 0.183140},
+			{92000, 186.650, 0.128308},
+		}
+		for _, row := range printed {
+			_, _, p, T, _, _ := Atmosphere(row.h)
+			if row.T != 0 && math.Abs(T-row.T) > 0.005 {
+				t.Errorf("T at h=%.0f: got %.4f K, printed %.3f K", row.h, T, row.T)
+			}
+			if row.P != 0 && math.Abs(p-row.P)/row.P > 1e-3 {
+				t.Errorf("p at h=%.0f: got %.6g Pa, printed %.6g Pa", row.h, p, row.P)
+			}
 		}
 	})
 
