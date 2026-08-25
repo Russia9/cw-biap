@@ -64,7 +64,7 @@ func Atmosphere(h float64) (H, rho, p, T, g, a float64) {
 	// Determine the layer
 	var layer int = -1
 	for i, v := range input {
-		if h <= v.H {
+		if H <= v.H {
 			layer = i - 1
 			break
 		}
