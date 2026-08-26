@@ -59,7 +59,7 @@ PART_STL = {  # Makefile target per part (mirrors gen_case.PART_STL)
 PARTS = ["all", "stage2up", "stage3up", "head"]
 SWEEP: dict[str, dict[str, list[tuple[float, int]]]] = {
     "all": {
-        "Ma": [(0.4, 1), (0.7, 0), (0.9, 1), (1.2, 1), (1.4, 0), (1.7, 1), (4, 0), (8, 1)],
+        "Ma": [(0.4, 1), (0.7, 0), (0.9, 1), (1.2, 1), (1.4, 0), (1.7, 1), (2,0), (2.5, 0), (3,0), (4, 0), (8, 1)],
         "alpha": [(0, 1), (3, 1), (5, 0), (10, 1), (15, 0)],
     },
     "stage2up": {
