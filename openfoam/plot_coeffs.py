@@ -17,6 +17,12 @@ Re-runnable as cases arrive: it rebuilds the plots and averages.csv from whateve
 result CSVs currently exist (idempotent overwrite). A short or unreadable CSV is
 warned and skipped, never fatal.
 
+Cases `sweep.py` recorded as *not* done are skipped: averaging the tail of a run
+that timed out puts a meaningless row into averages.csv, which feeds traj/.
+`convergence.py` already gates this upstream; the check is repeated here so a
+result CSV left over from an older run cannot slip through. Pass
+--ignore-manifest to disable.
+
     uv run python openfoam/plot_coeffs.py
     uv run python openfoam/plot_coeffs.py --window 25
 """
@@ -32,6 +38,7 @@ from typing import NamedTuple
 import matplotlib
 
 matplotlib.use("Agg")  # headless: just write PNGs
+import manifest
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -128,6 +135,10 @@ def main() -> None:
                     help="averages CSV path (default <results>/averages.csv)")
     ap.add_argument("--window", type=int, default=50,
                     help="iterations to average over, from the end (default 50)")
+    ap.add_argument("--state", type=Path, default=None,
+                    help=f"sweep manifest (default {manifest.DEFAULT_STATE})")
+    ap.add_argument("--ignore-manifest", action="store_true",
+                    help="average every result CSV, even ones the sweep marked failed")
     args = ap.parse_args()
 
     plots_dir = args.plots or args.results / "plots"
@@ -137,10 +148,16 @@ def main() -> None:
     if not cases:
         sys.exit(f"no case CSVs found in {args.results}")
 
+    statuses = {} if args.ignore_manifest else manifest.load_statuses(args.state)
+
     plots_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
     skipped: list[str] = []
     for c in cases:
+        reason = manifest.reject_reason(statuses, c.part, c.regime, f"Ma{c.Ma}_a{c.alpha}")
+        if reason is not None:
+            skipped.append(f"{c.path.name}: {reason}")
+            continue
         try:
             df = pd.read_csv(c.path)
             if df.empty or not set(SUMMARY_COEFFS + ["Time"]).issubset(df.columns):

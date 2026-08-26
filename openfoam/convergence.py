@@ -16,9 +16,13 @@ columns under a '#'-comment label line), and writes one tidy CSV per case:
     uv run python openfoam/convergence.py --only-part all
     uv run python openfoam/convergence.py --base openfoam --out openfoam/results
 
-Disk-driven: it parses whatever produced output, independent of
-sweep_state.json. A case with no/empty forceCoeffs output is warned and skipped,
-never fatal.
+Disk-driven: it parses whatever produced output. A case with no/empty
+forceCoeffs output is warned and skipped, never fatal.
+
+Cases `sweep.py` recorded as *not* done (timed out, failed) are skipped too --
+their history is the tail of a run that never converged, and averaging it
+silently poisons averages.csv. Pass --ignore-manifest for the old behaviour, or
+--state to point at a different manifest.
 """
 
 from __future__ import annotations
@@ -27,6 +31,8 @@ import argparse
 import csv
 import sys
 from pathlib import Path
+
+import manifest
 
 HERE = Path(__file__).resolve().parent  # openfoam/
 PARTS = ["all", "stage2up", "stage3up", "head"]  # mirrors sweep.py
@@ -128,6 +134,8 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=HERE / "results", help="output dir for CSVs (default openfoam/results/)")
     ap.add_argument("--only-part", action="append", choices=PARTS, help="restrict to part(s); repeatable")
     ap.add_argument("--glob", default="*/*/Ma*_a*/postProcessing/forceCoeffs", help="case discovery pattern under --base")
+    ap.add_argument("--state", type=Path, default=None, help=f"sweep manifest (default {manifest.DEFAULT_STATE})")
+    ap.add_argument("--ignore-manifest", action="store_true", help="convert every case on disk, even ones the sweep marked failed")
     args = ap.parse_args()
 
     only = set(args.only_part) if args.only_part else None
@@ -135,11 +143,23 @@ def main() -> None:
     if not force_dirs:
         sys.exit(f"no forceCoeffs output found under {args.base} (pattern: {args.glob})")
 
+    statuses = {} if args.ignore_manifest else manifest.load_statuses(args.state)
+
     args.out.mkdir(parents=True, exist_ok=True)
     written = 0
     skipped: list[str] = []
     for force_dir in force_dirs:
         name = out_name(force_dir)
+        case = force_dir.parent.parent
+        reason = manifest.reject_reason(
+            statuses, case.parent.parent.name, case.parent.name, case.name
+        )
+        if reason is not None:
+            # Drop any CSV a previous run wrote for this case: leaving it on
+            # disk would let plot_coeffs.py average it anyway.
+            (args.out / name).unlink(missing_ok=True)
+            skipped.append(f"{name}: {reason}")
+            continue
         try:
             labels, rows = read_case_history(force_dir)
         except ParseError as e:

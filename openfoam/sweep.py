@@ -35,8 +35,10 @@ import datetime as _dt
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # --- locations -------------------------------------------------------------
@@ -194,21 +196,142 @@ def _tail(path: Path, n: int = 40) -> str:
         return ""
 
 
+# The step's child leads its own process group, and _live_pgid names it while it
+# runs. Killing the *group* is the whole point: ./Allrun is only the top of
+#     sh ./Allrun -> sh (runParallel subshell) -> mpirun -> N solver ranks
+# and signalling the direct child alone orphans the mpirun subtree, which then
+# keeps burning cores for hours. Observed in the 2026-08 sweep: hisa ran 17 h
+# past its own timeout, halving the box and cascading into further timeouts.
+_live_pgid: int | None = None
+
+# Grace between SIGTERM and SIGKILL: mpirun needs a moment to tear its ranks
+# down cleanly, and a SIGKILLed mpirun orphans them exactly like the bug above.
+KILL_GRACE_S = 10.0
+
+
+def _kill_group(pgid: int, grace: float = KILL_GRACE_S) -> list[int]:
+    """SIGTERM the group, then SIGKILL what is left. Returns surviving PIDs."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return []
+        except PermissionError:
+            # Never let a failed signal abort the sweep: report the survivors
+            # and let the caller decide how loudly to complain.
+            return _group_members(pgid)
+        deadline = time.monotonic() + (grace if sig == signal.SIGTERM else 2.0)
+        while time.monotonic() < deadline:
+            if not _group_members(pgid):
+                return []
+            time.sleep(0.2)
+    return _group_members(pgid)
+
+
+def _group_members(pgid: int) -> list[int]:
+    """Live PIDs still in the process group (empty when it is fully reaped).
+
+    Zombies are excluded: the step's direct child stays a zombie in its own
+    group until we wait() it, and counting that would report a spurious
+    survivor on every single timeout.
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "pid=,pgid=,stat="],
+            capture_output=True, text=True, timeout=30, check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    pids = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or not parts[1].isdigit():
+            continue
+        if int(parts[1]) != pgid or parts[2].startswith("Z"):
+            continue
+        pids.append(int(parts[0]))
+    return [p for p in pids if p != os.getpid()]
+
+
+# Solver/MPI process names that must not already be running when a sweep starts.
+STRAY_PATTERNS = ("hisa", "rhoSimpleFoam", "snappyHexMesh", "mpirun", "orted")
+
+
+def find_stray_solvers() -> list[tuple[int, str]]:
+    """(pid, command) for OpenFOAM/MPI processes running outside this sweep."""
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "pid=,args="],
+            capture_output=True, text=True, timeout=30, check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found = []
+    for line in out.splitlines():
+        pid_s, _, args = line.strip().partition(" ")
+        if not pid_s.isdigit() or int(pid_s) == os.getpid():
+            continue
+        exe = Path(args.split()[0]).name if args.split() else ""
+        if any(exe == p or exe.startswith(p) for p in STRAY_PATTERNS):
+            found.append((int(pid_s), args[:100]))
+    return found
+
+
 def run_step(step: str, cmd: list[str], cwd: Path, log_path: Path, timeout: float) -> None:
-    """Run a command, streaming combined output to log_path; raise StepError on failure."""
+    """Run a command, streaming combined output to log_path; raise StepError on failure.
+
+    The child is started in a new session so the entire solver tree can be
+    signalled as one group on timeout, Ctrl-C or SIGTERM.
+    """
+    global _live_pgid
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w") as log:
         try:
-            subprocess.run(
+            proc = subprocess.Popen(
                 cmd, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
-                timeout=timeout, check=True,
+                start_new_session=True,
             )
-        except subprocess.TimeoutExpired:
-            raise StepError(step, f"timed out after {timeout:.0f}s", _tail(log_path))
-        except subprocess.CalledProcessError as e:
-            raise StepError(step, f"exited {e.returncode}", _tail(log_path))
         except FileNotFoundError as e:
             raise StepError(step, f"command not found: {e}", "")
+
+        _live_pgid = pgid = proc.pid  # start_new_session => pid is the new pgid
+        try:
+            rc = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            survivors = _kill_group(pgid)
+            proc.wait()
+            reason = f"timed out after {timeout:.0f}s"
+            if survivors:
+                # Never continue quietly: leftovers steal cores from every case
+                # that follows and are what made the original failure cascade.
+                reason += f" -- WARNING: {len(survivors)} process(es) survived the kill: {survivors}"
+            raise StepError(step, reason, _tail(log_path))
+        finally:
+            # Covers the success path too: a solver that forked something which
+            # outlived it would otherwise leak just as silently.
+            _kill_group(pgid, grace=0.0)
+            _live_pgid = None
+
+        if rc != 0:
+            raise StepError(step, f"exited {rc}", _tail(log_path))
+
+
+def _install_signal_handlers() -> None:
+    """Tear the live step's process group down on Ctrl-C / SIGTERM.
+
+    start_new_session detaches the child from our foreground process group, so
+    SIGINT no longer reaches it implicitly -- without this, Ctrl-C on the sweep
+    strands the solver exactly like a timeout used to.
+    """
+
+    def handler(signum: int, _frame: object) -> None:
+        if _live_pgid is not None:
+            print(f"\nsignal {signum}: killing solver process group {_live_pgid}", flush=True)
+            _kill_group(_live_pgid)
+        sys.exit(128 + signum)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, handler)
 
 
 def has_mesh(case_dir: Path) -> bool:
@@ -267,7 +390,7 @@ def extract_coeffs(case_dir: Path) -> tuple[float, float, float]:
 
 
 # --- preflight -------------------------------------------------------------
-def preflight(queue: list[Case]) -> None:
+def preflight(queue: list[Case], allow_stray: bool = False) -> None:
     """Fail fast (before hours of work) if the environment can't run the sweep."""
     if not os.environ.get("WM_PROJECT_DIR"):
         sys.exit("error: WM_PROJECT_DIR is not set -- source your OpenFOAM environment first")
@@ -280,6 +403,20 @@ def preflight(queue: list[Case]) -> None:
     missing = [b for b in need if shutil.which(b) is None]
     if missing:
         sys.exit(f"error: OpenFOAM binaries not on PATH: {', '.join(missing)}")
+
+    # Leftover solvers from an earlier run halve the machine and make every case
+    # here likelier to hit its timeout -- which strands more of them. Refuse to
+    # start a multi-hour sweep onto an already-occupied box.
+    stray = [] if allow_stray else find_stray_solvers()
+    if stray:
+        listing = "\n".join(f"    {pid}  {cmd}" for pid, cmd in stray[:10])
+        more = f"\n    ... and {len(stray) - 10} more" if len(stray) > 10 else ""
+        sys.exit(
+            f"error: {len(stray)} OpenFOAM/MPI process(es) are already running:\n"
+            f"{listing}{more}\n"
+            "  These are most likely stranded by an earlier sweep. Kill them "
+            "before starting, or pass --allow-stray to run anyway."
+        )
 
     # Build any STLs that gen_case will need (it is invoked with --no-stl below).
     parts = {c.part for c in queue} | {"all"}  # 'all' is always the coefficient reference
@@ -385,6 +522,8 @@ def main() -> None:
     ap.add_argument("--only-part", action="append", choices=PARTS, help="restrict to part(s); repeatable")
     ap.add_argument("--max-cases", type=int, default=None, help="process at most N pending cases")
     ap.add_argument("--retry-failed", action="store_true", help="re-queue cases marked failed")
+    ap.add_argument("--allow-stray", action="store_true",
+                    help="start even if OpenFOAM/MPI processes are already running")
     ap.add_argument("--no-mesh-reuse", action="store_true", help="mesh every case (no alpha sharing)")
     ap.add_argument("--gen-timeout", type=float, default=600.0)
     ap.add_argument("--mesh-timeout", type=float, default=7200.0)
@@ -398,6 +537,11 @@ def main() -> None:
     if args.dry_run:
         print_queue(queue)
         return
+
+    # Must come before the first run_step: start_new_session detaches the solver
+    # from our process group, so without these handlers a Ctrl-C or a `kill` on
+    # this process leaves the whole mpirun tree running.
+    _install_signal_handlers()
 
     state = load_state(args.state)
 
@@ -416,7 +560,7 @@ def main() -> None:
     if args.max_cases is not None:
         todo = todo[: args.max_cases]
 
-    preflight(queue)
+    preflight(queue, allow_stray=args.allow_stray)
     group_src = discover_meshes(queue, state, args.base)
 
     log(
