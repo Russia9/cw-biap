@@ -47,32 +47,121 @@ L_FULL = 12000
 # above the design value everywhere inside the band (1.165→1.230, 1.211→1.244,
 # 1.241→1.251, 1.248→1.260), which suggested no self-consistent k_V existed
 # within it and forced sizing at the band's top. That was an artefact of the
-# under-parameterised pitch program: arc count bought range at every step
-# tested (8 → 10 → 12 → 14). With the 14-arc program (6/4/4) the simulator
-# achieves 1.1837 against a design 1.198 — measured now beats design, sits
-# inside the band and lands near the §5.2 worked example's 1.165.
-K_V = 1.198
+# steering, in two stages. Arc count was the first part: range grew at every
+# step tested (8 → 10 → 12 → 14 → 20). The parameterisation was the second and
+# larger part. Every arc is a function of TIME in ϑ, and each has ϑ̇ = 0 at its
+# endpoints, so α = ϑ − θ is driven off any plateau at each joint by α̇ = −θ̇:
+# the §4.4 |α| ceilings could be touched but never held, and the program had to
+# buy range with loft instead, pinned against the 1800 km apogee limit. Steering
+# the same arcs in the α frame (traj/pitch.go FrameAlpha, ϑ = θ + α_пр) makes a
+# constant α exactly representable. The 20-arc α-framed program holds α on the
+# −1.5° subsonic and −10° supersonic limits, flies 360 km flatter, and reaches
+# 12 419 km with every §4.4 check satisfied — against 11 462 km for the best of
+# six ϑ-framed searches at the same mass and the same CFD table.
+#
+# That program measures k_V = 1.176 against this design value of 1.187, so the
+# sizing is conservative, sits in the lower half of the Аппазов band as the
+# range argues for, and lands near his §5.2 worked example's 1.165. 1.187 is
+# also what puts m_01 at 29 708 kg, matching the prototype's 29 724 kg
+# (archive.typ:109) — the assignment fixes the launch mass, so k_V is the knob
+# that satisfies it and its measured self-consistency is the check.
+K_V = 1.187
 
 # Burnout-trajectory reference (table 2.1, assets/table-2.1.csv): full
 # range L (km) maps to burnout altitude h_к (km), active-segment range l_к (km),
 # path angle θ_к (deg), burnout velocity V_к (m/s) and range gradient L'_V.
 _TRAJ = load_trajectory()
 
-# Per-stage input data. d_m — motor outer diameter (m), taken from prototype.
+# Per-stage input data. d_m — motor outer diameter (m), taken from prototype;
+# it feeds only the δ_тз lookup on chart 3-6, never the computed d_(м i).
 # mu_k — burnout mass fraction μ_к (fuel burned / stage launch mass).
-# l_z — charge elongation λ_з; optional. Chart 4-27 gives a recommended value
+# l_z — charge elongation l̄_з; optional. Chart 4-27 gives a recommended value
 # from ρ_т·u, which is what a stage uses when the key is absent. Overriding it
-# shortens and fattens the motor: d_м ∝ λ_з^(-1/3), so the burn time (3.22)
-# lengthens and the thrust-to-weight ratio n_0 = P_уд.0 μ_к / Δt_к drops.
-# No stage overrides it: every stage uses the chart value. A sweep of stage 1
-# over λ_з ∈ 3.5…8.0 with the real CFD table did show a ~4 % better plateau
-# around 5…7 (the drag-free sweep had shown the opposite), but with the 14-arc
-# pitch program the chart value 4.16 reaches L_FULL on its own, so the
-# deviation is no longer needed and the chart recommendation stands.
+# shortens and fattens the motor: d_м ∝ l̄_з^(-1/3), so the burn time (3.22)
+# lengthens and the thrust-to-weight ratio λ_[0/п] = Δt_к / (μ_к P_уд) rises.
+# (l̄_з is the report's overline(l_(з i)); λ is reserved for thrust-to-weight,
+# as in archive.typ, so the two are never both written λ here.)
+# rho_u — ρ_т·u, kg/(m²·s); optional. Absent, it comes from the fuel's burn-rate
+# law at p_k (utils.burn_rate). Present, it overrides that law and u is derived
+# back from it, because ρ_т·u is what chart 4-27 is indexed by and what the
+# report reasons about, while ρ_т stays the fuel's own property.
+#
+# Stages 2 and 3 override both, as one change of charge form: l̄_з depends on the
+# propellant burn rate, which the grain form sets, so the pair (l̄_з, ρ_т·u) may
+# be chosen rather than looked up. Both are chosen to make the motor wide enough
+# to seat a four-nozzle control system deflecting 6° (stage 2) and 4° (stage 3):
+#
+#     d_м >= d_a (1 + sqrt(2)) + 2 l_a sin(delta)
+#
+# — condition (3.43) for four exit cones on their bolt circle, plus the radial
+# swing of a nozzle pivoting at its throat. Left on the chart values the
+# polyurethane law gives (ρ_т·u = 17.09 → l̄_з = 2.81 / 2.21), stage 2 reaches
+# only 2.63° and stage 3 fails even the ungimbaled (3.43), 0.83 m against
+# 1.07 — the gap the report closed by wrapping stage 3 in an external shell.
+#
+# The two knobs do different jobs. l̄_з alone sets the diameter, d_м ∝ l̄_з^(-1/3).
+# The nozzle fit is set by their PRODUCT: (3.30)–(3.34) give
+#
+#     (d_a/d_м)² ∝ (F_a/F_кр) K_S l̄_з (ρ_т·u) sqrt(R T) / (K_0 p_к n_с)
+#
+# in which d cancels, so the fit is scale-free and reduces to a ceiling on
+# l̄_з·ρ_т·u — 43.8 for stage 2 at 6°, 20.1 for stage 3 at 4°.
+#
+# Stage 2 stays on the nomogram: l̄_з2 = 2.27 lies inside lambda_p2's digitized
+# span 2.055…3.981, and reading ρ_т·u = 19.30 (u = 10.72 mm/s) off the curve
+# there puts the product at exactly 43.8 — it clears 6° by 0.6 mm, and the 2.055
+# end of the curve would still fit 8.3°.
+#
+# Stage 3 cannot be taken off the chart at all. Every point of lambda_p3 carries
+# l̄_з·ρ_т·u >= 32.5 (the curves are close to iso-product hyperbolae: 32.5…39.0
+# end to end), against the 20.1 the 4° fit allows — so the whole curve is
+# infeasible, not merely its floor, and at the floor l̄_з = 1.605 the motor is
+# still 253 mm too narrow. The pair is therefore set by the two conditions that
+# remain: l̄_з3 = 1.00 for the diameter, and ρ_т·u = 19.50 (u = 10.83 mm/s) to put
+# λ_п3 = 0.190 mid-band, its 0.18…0.20 requirement having been a long-standing
+# open item. That leaves the product at 19.50, clearing 4° by 15 mm. Reading
+# ρ_т·u off a linear extension of lambda_p3 instead would give 23.4 and miss 4°
+# by 87 mm, so the extrapolation is not available even as a fallback; what the
+# chart WOULD say at ρ_т·u = 19.50 is l̄_з = 1.75.
+#
+# Cross-check on the result: u2 = 10.72 and u3 = 10.83 mm/s agree to 1 %, as two
+# stages of the same propellant at the same p_к should, the residue reading as a
+# modest difference of grain form. K_S (3.30) must stay 2.03 for both stages —
+# it enters (d_a/d_м)² directly, so a star or cross grain (K_S up to 3.4) would
+# grow d_a by ~29 % and undo the fit. The d_m keys stay at the prototype 1.1 m,
+# stage 3 borrowing stage 2's rather than the prototype's own narrow third stage,
+# because it is now built to within 15 % of that calibre (δ_тз3 8.45 → 9.16 mm at
+# chart 3-6).
+#
+# Stage 1 overrides neither: it clears 8° by 378 mm on the chart value. A sweep
+# of stage 1 over l̄_з ∈ 3.5…8.0 with the real CFD table did show a ~4 % better
+# plateau around 5…7 (the drag-free sweep had shown the opposite), but with the
+# 14-arc pitch program the chart value 4.16 reaches L_FULL on its own, so the
+# deviation is not needed and the chart recommendation stands.
+#
+# The pair costs 4.0 % of launch mass — 29 724 → 30 909 kg — because a squat
+# motor carries more case and dome per kg of propellant (a_дв 0.055 → 0.058 on
+# stage 2, 0.070 → 0.083 on stage 3).
 STAGES = [
     {"p_k": 50, "p_a": 0.70, "fuel": "polybutadiene", "d_m": 1.7, "mu_k": 0.66},
-    {"p_k": 35, "p_a": 0.37, "fuel": "polyurethane", "d_m": 1.1, "mu_k": 0.65},
-    {"p_k": 35, "p_a": 0.14, "fuel": "polyurethane", "d_m": 0.9, "mu_k": 0.65},
+    {
+        "p_k": 35,
+        "p_a": 0.37,
+        "fuel": "polyurethane",
+        "d_m": 1.1,
+        "mu_k": 0.65,
+        "l_z": 2.27,  # four nozzles gimbaling 6°, see the note above
+        "rho_u": 19.30,  # chart 4-27 (lambda_p2) at l̄_з = 2.27
+    },
+    {
+        "p_k": 35,
+        "p_a": 0.14,
+        "fuel": "polyurethane",
+        "d_m": 1.1,  # = stage 2's prototype: stage 3 is built to that calibre
+        "mu_k": 0.65,
+        "l_z": 1.00,  # four nozzles gimbaling 4°, see the note above
+        "rho_u": 19.50,  # off-chart: set by λ_п3 = 0.190, not by lambda_p3
+    },
 ]
 
 # Payload carried by the top stage: warhead m_бч plus control unit m_ау (kg).
@@ -113,6 +202,19 @@ N_TAIL = 0.008  # tail-section mass coefficient N
 # Charge/nozzle geometry factors (section 3.28–3.42)
 K_S = 2.03  # burning-surface shape coefficient k_s (2.03–3.4)
 N_NOZZLES = 4  # number of nozzles per stage n_с (prototype: 4 gimbaled nozzles)
+# Control-nozzle deflection δ_с per stage, degrees. Condition (3.43) as written
+# seats four FIXED exit cones on the aft dome: their centres sit on a bolt circle
+# of radius ≥ d_a/√2 so adjacent cones just touch, and the outermost point of a
+# cone must fall inside the dome, giving d_м ≥ d_a(1+√2). A gimbaled nozzle also
+# swings its exit plane outward by l_a sin δ_с about its throat, so the dome has
+# to clear
+#
+#     d_м >= d_a (1 + sqrt(2)) + 2 l_a sin(δ_с)
+#
+# instead. The angles are the prototype's (§2: 8°/6°/4° for stages I–III).
+# Stage 1 clears the condition by 378 mm at its chart λ_з; stages 2 and 3 are
+# sized against it, and it is what picks their λ_з/ρ_т·u pair — see STAGES.
+DELTA_C_DEG = [8.0, 6.0, 4.0]
 H_RUDDER = 0.2  # end-rudder protrusion h, m
 
 CHART_FA = "assets/chart-3-5-fa-fkp-pa-pk.csv"
@@ -205,6 +307,9 @@ def stage_props(s: dict, i: int) -> StageProps:
     k = float(props["k_st"])
     T_st = float(props["T"])
     u, rho_u = burn_rate(s["fuel"], p_k)  # u [mm/s], rho_u [kg/(m²·s)]
+    if "rho_u" in s:  # charge-form override, see the STAGES comment
+        rho_u = s["rho_u"]
+        u = rho_u / float(props["rho"]) * 1000  # kg/(m²·s) → mm/s
     return StageProps(
         P_ud_st=float(props["P_ud"]),
         al_pct=int(props["al_pct"]),
@@ -635,10 +740,19 @@ def emit_geometry(d_m: list[float]) -> list[Geometry]:
         d = d_m[i - 1]
         stage_header(i)
         emit(f'l_(з {i}) = {p.l_z:.2f} dot {d:.2f} = {g.l_zi:.2f} "м"')
-        emit(
-            f"h_{i} = (0.37 dot {p.l_z:.2f} - 0.30) dot {d:.2f}"
-            f' = {g.h_slot:.3f} "м"'
-        )
+        # (3.29) describes the slotted charge. Where the slot has closed
+        # (λ_з ≤ 0.30/0.37) the stage has no slot, so report that instead of a
+        # negative length — see the stage-3 note on STAGES.
+        if g.h_slot > 0:
+            emit(
+                f"h_{i} = (0.37 dot {p.l_z:.2f} - 0.30) dot {d:.2f}"
+                f' = {g.h_slot:.3f} "м"'
+            )
+        else:
+            emit(
+                f"h_{i} = (0.37 dot {p.l_z:.2f} - 0.30) dot {d:.2f}"
+                f' <= 0 - "щель вырождается, заряд канальный"'
+            )
         emit(f'S_{i} = {K_S} dot {p.l_z:.2f} dot {d:.2f}^2 = {g.S:.2f} "м²"')
         emit(
             f'd_("кр" {i})^2 = (4 dot {g.S:.2f} dot {p.rho_u:.2f} dot '
@@ -683,7 +797,6 @@ def emit_geometry(d_m: list[float]) -> list[Geometry]:
     # ---- Summary table ----
     entries = [
         ("$l_(з i)$, м", ".2f", "l_zi"),
-        ("$h_i$, м", ".3f", "h_slot"),
         ("$S_i$, м²", ".2f", "S"),
         ('$d_("кр" i)$, м', ".3f", "d_kr"),
         ('$F_("кр" i)$, м²', ".4f", "F_kr"),
@@ -698,17 +811,30 @@ def emit_geometry(d_m: list[float]) -> list[Geometry]:
         ('$l_("дн" i)$, м', ".3f", "l_dn"),
         ("$L_i$, м", ".2f", "L"),
     ]
-    param_table(param_rows(entries, geo))
+    rows = param_rows(entries, geo)
+    rows.insert(
+        1,
+        param_row(
+            "$h_i$, м",
+            [f"${g.h_slot:.3f}$" if g.h_slot > 0 else DASH for g in geo],
+        ),
+    )
+    param_table(rows)
     print()
 
-    # ---- Condition (3.43): d_м ≥ d_a (1 + √2) for 4-nozzle layout ----
+    # ---- Condition (3.43) for four GIMBALED nozzles, see DELTA_C_DEG. Printed
+    # at 3 decimals: stage 2 clears by 0.6 mm, which 2 decimals would hide. ----
     factor = 1 + math.sqrt(2)
     for i, g in enumerate(geo, 1):
-        rhs = g.d_a * factor
+        delta = DELTA_C_DEG[i - 1]
+        rhs = g.d_a * factor + 2 * g.l_a * math.sin(math.radians(delta))
         verdict = "проходит" if d_m[i - 1] >= rhs else "не проходит"
         emit(
-            f"d_(м {i}) = {d_m[i - 1]:.2f} >= d_(a {i}) (1+sqrt(2))"
-            f' = {rhs:.2f} - "{verdict}"'
+            f"d_(м {i}) = {d_m[i - 1]:.3f} >= d_(a {i}) (1+sqrt(2))"
+            f' + 2 l_(a {i}) sin delta_("с"{i})'
+            f" = {g.d_a:.3f} dot {factor:.3f}"
+            f" + 2 dot {g.l_a:.3f} dot sin({delta:g}°)"
+            f' = {rhs:.3f} "м" - "{verdict}"'
         )
     print()
 
