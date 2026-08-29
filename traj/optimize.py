@@ -68,10 +68,13 @@ DEFAULT_K_COS = 1.1
 # instead of being discarded.
 CHECKPOINT_EVERY = 10
 
-# Angle bounds per steering frame. ϑ arcs sweep the whole powered turn; α arcs
-# only ever need to reach a little past the §4.4 supersonic limit of 10 deg, and
-# a small positive α must stay reachable for the pitch-over.
-ANGLE_BOUNDS = {"theta": (5.0, 89.0), "alpha": (-12.0, 3.0)}
+# Angle bounds per steering frame. ϑ arcs sweep the whole powered turn. α arcs
+# need to reach a little past the §4.4 supersonic limit of 10 deg while it
+# applies (H ≤ 94 km), and well past it above that boundary, where §4.4 imposes
+# no α limit and the optimum uses −13…−17 deg (stage 3 burns entirely there);
+# a small positive α must stay reachable for the pitch-over. The §4.4 limits
+# themselves are enforced by the penalty terms, not by this box.
+ANGLE_BOUNDS = {"theta": (5.0, 89.0), "alpha": (-18.0, 3.0)}
 
 Config = dict[str, Any]
 

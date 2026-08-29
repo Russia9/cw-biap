@@ -41,12 +41,12 @@ const (
 	//	  sys.path.insert(0,'openfoam'); from gen_case import stl_bbox; \
 	//	  print(stl_bbox(Path('rocket.stl')))"
 	//
-	// L_all is the 18.24 m stack height (sum L_i = 14.85 plus 3.39 m of
-	// payload and interstage section) plus the 3 mm eps overhang rocket.scad
-	// uses to fuse stacked sections into one solid. R_all is d_ext[0]/2 =
-	// d_(м 1)/2 = 1.58/2 — stage 1 sets the maximum diameter.
-	RrefAll = 0.79   // full-rocket max radius [m] -> Aref = π·0.79² = 1.9607 m²
-	Lref    = 18.243 // full-rocket length [m], nose tip to aft plane
+	// L_all is the 17.82 m stack height (sum L_i = 13.83 plus interstage and
+	// payload sections, plus the 3 mm eps overhang rocket.scad uses to fuse
+	// stacked sections into one solid). R_all is d_ext[0]/2 = d_(м 1)/2 =
+	// 1.57/2 — stage 1 sets the maximum diameter.
+	RrefAll = 0.785  // full-rocket max radius [m] -> Aref = π·0.785² = 1.9359 m²
+	Lref    = 17.823 // full-rocket length [m], nose tip to aft plane
 )
 
 // Aref is the reference area for aerodynamic forces/moments [m²].

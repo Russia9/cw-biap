@@ -9,8 +9,8 @@
 // Dimensions come from rocket-params.scad, which main.py generates; only the
 // structural choices below are made here.
 //
-// Staging: the interstage skirt belongs to the LOWER stage and drops with it.
-// Stages 2 and 3 mate flush — see the outer-mold-line note at d_ext.
+// Staging: each interstage shroud belongs to the LOWER stage and drops with
+// it — the 1/2 shroud with stage 1, the 2/3 shroud with stage 2.
 //
 // Unit = METERS. OpenSCAD is unitless; set SCALE=1000 for a millimetre STL.
 //
@@ -22,7 +22,7 @@
 $fn = 360;
 
 // ---- Export selection (override via -D on the CLI) ----
-PART  = "head";   // "all" | "stage2up" | "stage3up" | "head"
+PART  = "all";   // "all" | "stage2up" | "stage3up" | "head"
 SCALE = 1;       // 1 = metres (model units); 1000 = millimetres
 
 eps = 0.003;     // small overlap so stacked sections fuse into one manifold solid
@@ -35,21 +35,25 @@ eps = 0.003;     // small overlap so stacked sections fuse into one manifold sol
 include <rocket-params.scad>
 
 // ---- Outer mold line -------------------------------------------------------
-// Condition (3.43) requires d_(м i) >= d_(a i)(1+sqrt(2)) to seat four nozzles
-// on the aft dome. Stage 3 fails it: 0.83 < 0.443 * 2.414 = 1.07. Per the
-// report, stage 3 keeps its narrow motor and gains an EXTERNAL SHELL at stage
-// 2's diameter, so the surface the flow sees is d_ext, not d_m. Stages 2 and 3
-// therefore mate FLUSH and there is no 2/3 interstage.
-d_ext = [d_m[0], d_m[1], d_m[1]];
+// Every stage flies at its own motor diameter: the charge-form override in
+// main.py (see its STAGES note) widens stages 2 and 3 until the gimbaled
+// four-nozzle condition d_м >= d_a(1+sqrt(2)) + 2 l_a sin(δ_с) passes on the
+// motor itself, so the external shell that used to wrap a too-narrow stage 3
+// is retired and the mold line is just d_m.
+d_ext = d_m;
 
 
 // ============================================================================
 //  Structural / CAD-drawing parameters — chosen here, not produced by main.py.
 // ============================================================================
 
-// Interstage 1-2 shroud = skirt (d_ext[0]) + cone; belongs to stage 1 and
-// drops with it.
+// Interstage shrouds = skirt (lower diameter) + cone; each belongs to the
+// stage below it and drops with it. The 2/3 shroud is new with the retired
+// shell: stages 2 and 3 no longer share a diameter (1.25 vs 1.09 m), so the
+// flush joint became a 15.6°-half-angle cone. Its 0.30+0.30 m split mirrors
+// the 1/2 shroud's proportions at the smaller step.
 H_sk12 = 0.40; H_cone21 = 0.40;   // stage 1/2 interstage (d_ext[0] -> d_ext[1])
+H_sk23 = 0.30; H_cone32 = 0.30;   // stage 2/3 interstage (d_ext[1] -> d_ext[2])
 
 // Navigation + head (read from the CAD drawing; edit freely).
 d_ns = 0.70; L_ns = 0.18;   // navigation module
@@ -80,7 +84,9 @@ z_body1  = 0;
 z_sk12   = z_body1 + L[0];     // interstage skirt 1-2, at d_ext[0]
 z_cone21 = z_sk12 + H_sk12;    // cone d_ext[0] -> d_ext[1]
 z_body2  = z_cone21 + H_cone21;
-z_body3  = z_body2 + L[1];     // stages 2/3 mate flush (equal diameters, no skirt)
+z_sk23   = z_body2 + L[1];     // interstage skirt 2-3, at d_ext[1]
+z_cone32 = z_sk23 + H_sk23;    // cone d_ext[1] -> d_ext[2]
+z_body3  = z_cone32 + H_cone32;
 z_s3nav  = z_body3 + L[2];
 z_nav    = z_s3nav + H_s3nav;
 z_navhead = z_nav + L_ns;
@@ -89,9 +95,8 @@ z_nose   = z_head + L_pl;
 z_top    = z_nose + h_nose;
 
 // ---------- section groups (defined in global coordinates) ----------
-// Stage 1 carries the interstage shroud above it, which encloses the stage-2
-// aft end and drops together with stage 1. Stages 2 and 3 share a diameter
-// (d_ext) and mate flush, so there is no 2/3 shroud.
+// Each lower stage carries the interstage shroud above it, which encloses the
+// next stage's aft end and drops together with that lower stage.
 
 module stage1_group() {
     color(C_S[0]) seg_tube(z_body1, L[0], d_ext[0]);
@@ -103,6 +108,10 @@ module stage1_group() {
 
 module stage2_group() {
     color(C_S[1]) seg_tube(z_body2, L[1], d_ext[1]);
+    color(C_STR) {
+        seg_tube(z_sk23, H_sk23, d_ext[1]);        // skirt over the stage-3 aft end
+        seg_cone(z_cone32, H_cone32, d_ext[1], d_ext[2]);
+    }
 }
 
 module stage3_group() {

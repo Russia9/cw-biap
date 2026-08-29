@@ -83,36 +83,36 @@ func TestSimulateGoldenZeroAero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 28283 {
-		t.Errorf("rows = %d, pinned 28283", len(rows))
+	if len(rows) != 31974 {
+		t.Errorf("rows = %d, pinned 31974", len(rows))
 	}
 	smokeCheckRows(t, r, rows)
 	pinDiagnostics(t, d, map[string]string{
-		"MaxQ":            "91211.05957846092",
-		"MaxQt":           "35.80000000000024",
-		"MaxAlphaSub":     "1.638934600826113",
-		"MaxAlphaSup":     "15.99855290313276",
-		"MaxPitchRate":    "2.997022033095309",
-		"MaxPitchRateNum": "3.027442781117401",
-		"PitchRateSep1":   "0",
-		"PitchRateSep2":   "1.5472707971050502e-13",
-		"CrossUpTime":     "95.19999999999835",
-		"CrossUpH":        "94133.99353360664",
+		"MaxQ":            "91102.78798159634",
+		"MaxQt":           "36.00000000000024",
+		"MaxAlphaSub":     "1.4876043360514415",
+		"MaxAlphaSup":     "9.966644515828213",
+		"MaxPitchRate":    "2.8407493477549353",
+		"MaxPitchRateNum": "2.831091635874278",
+		"PitchRateSep1":   "0.4417923556337372",
+		"PitchRateSep2":   "0.2916722080013727",
+		"CrossUpTime":     "91.19999999999858",
+		"CrossUpH":        "94070.68363761343",
 		"CrossUpStage":    "2",
-		"CrossDownTime":   "2798.599999998554",
-		"BurnoutT":        "139.79999999999825",
-		"BurnoutV":        "7421.260681630526",
-		"BurnoutH":        "206345.3102512015",
-		"BurnoutTheta":    "22.18337760794249",
-		"ApogeeT":         "1451.1999999997793",
-		"ApogeeH":         "2.2169063699595816e+06",
-		"ImpactT":         "2827.822265623527",
-		"ImpactRange":     "1.2747352174058946e+07",
+		"CrossDownTime":   "3177.4999999982097",
+		"BurnoutT":        "142.199999999998",
+		"BurnoutV":        "7328.511975119505",
+		"BurnoutH":        "269111.86909314804",
+		"BurnoutTheta":    "36.96617585443949",
+		"ApogeeT":         "1641.1999999996067",
+		"ApogeeH":         "3.461435018140195e+06",
+		"ImpactT":         "3196.943945310692",
+		"ImpactRange":     "1.0233773952114392e+07",
 		"GroundHitStage":  "0",
 	})
 }
 
-// TestSimulateGoldenWithAero pins the reported design point (12 427 km) against
+// TestSimulateGoldenWithAero pins the reported design point (12 379 km) against
 // the CFD table. Skipped when the table is not checked out.
 func TestSimulateGoldenWithAero(t *testing.T) {
 	at, err := LoadAero("../openfoam/results/averages.csv")
@@ -124,31 +124,31 @@ func TestSimulateGoldenWithAero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 26320 {
-		t.Errorf("rows = %d, pinned 26320", len(rows))
+	if len(rows) != 24306 {
+		t.Errorf("rows = %d, pinned 24306", len(rows))
 	}
 	smokeCheckRows(t, r, rows)
 	pinDiagnostics(t, d, map[string]string{
-		"MaxQ":            "76391.14858549953",
-		"MaxQt":           "37.000000000000256",
-		"MaxAlphaSub":     "1.5013267485818862",
-		"MaxAlphaSup":     "10.036204536519318",
-		"MaxPitchRate":    "2.997022033095309",
-		"MaxPitchRateNum": "3.027442781117401",
-		"PitchRateSep1":   "0",
-		"PitchRateSep2":   "1.5472707971050502e-13",
-		"CrossUpTime":     "102.39999999999795",
-		"CrossUpH":        "94031.69201306533",
+		"MaxQ":            "76573.91392241052",
+		"MaxQt":           "37.600000000000264",
+		"MaxAlphaSub":     "1.4876043360514415",
+		"MaxAlphaSup":     "9.966644515828213",
+		"MaxPitchRate":    "2.921884677948354",
+		"MaxPitchRateNum": "2.9216174709593243",
+		"PitchRateSep1":   "0.6052707251214638",
+		"PitchRateSep2":   "0.32161141434121393",
+		"CrossUpTime":     "106.7999999999977",
+		"CrossUpH":        "94064.95785348304",
 		"CrossUpStage":    "2",
-		"CrossDownTime":   "2587.399999998746",
-		"BurnoutT":        "139.79999999999825",
-		"BurnoutV":        "7363.7526498580055",
-		"BurnoutH":        "181731.45143907238",
-		"BurnoutTheta":    "20.236928563169812",
-		"ApogeeT":         "1348.2999999998729",
-		"ApogeeH":         "1.8977120355019001e+06",
-		"ImpactT":         "2631.590624998706",
-		"ImpactRange":     "1.242735568709288e+07",
+		"CrossDownTime":   "2375.599999998939",
+		"BurnoutT":        "142.199999999998",
+		"BurnoutV":        "7336.767718819567",
+		"BurnoutH":        "166965.0804006718",
+		"BurnoutTheta":    "16.472512464552604",
+		"ApogeeT":         "1243.899999999968",
+		"ApogeeH":         "1.51329392734827e+06",
+		"ImpactT":         "2430.3562499988893",
+		"ImpactRange":     "1.2379329780130113e+07",
 		"GroundHitStage":  "0",
 	})
 }
