@@ -2,6 +2,17 @@
 cd "${0%/*}" || exit                                # run from this directory
 . "${WM_PROJECT_DIR:?source an OpenFOAM environment first}/bin/tools/RunFunctions"
 
+# Single-node MPI: shared memory only. OpenMPI's TCP BTL binds a listening
+# socket per rank on 0.0.0.0:1024+ (and [::]), which is reachable from the
+# internet on a public host. An inbound scan connection lands in
+# mca_btl_tcp_recv_blocking inside opal_progress, which never returns: that
+# rank's progress engine is wedged and the whole job deadlocks in its next
+# halo exchange. Observed 2026-08-30 -- two stage2up/Ma6 cases each burned the
+# full 6 h solve timeout, with four scanner connections held open on ranks and
+# all 12 ranks parked in MPI_Waitall. self,sm loses nothing: under
+# btl_base_verbose the TCP BTL reports every on-node peer UNREACHABLE.
+export OMPI_MCA_btl=self,sm
+
 # Mesh generation: background O-grid -> feature edges -> snap+layers (in
 # parallel) -> reconstruct to a clean serial case -> check.
 # snappyHexMesh runs on the decomposed background mesh; the mesh-stage
