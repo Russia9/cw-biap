@@ -3,7 +3,7 @@
 // Index 0/1/2 = stage 1/2/3; all lengths in metres.
 
 d_m  = [1.57, 1.25, 1.09];  // motor-case diameter  d_(м i)
-L    = [7.70, 3.95, 2.18];  // overall stage length L_i
+L    = [7.14, 3.51, 1.75];  // overall stage length L_i
 
 // Nozzles are not modelled (they broke snappyHexMesh); these are
 // carried for the echo block and drawing reference only.

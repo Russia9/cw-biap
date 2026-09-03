@@ -102,9 +102,9 @@ Any change to masses, impulses, the aero table or the reference area makes this 
 
 ### Reference geometry in `constants.go`
 
-`RrefAll = 0.79` and `Lref = 18.243` are the bounding box of `rocket.stl`, measured with `openfoam/gen_case.py`'s `stl_bbox()` — the same function that writes `Aref`/`lRef` into each CFD case, so the simulator and the coefficients share one reference by construction. Refresh both after any change to `main.py`'s d_(м i)/L_i or to `rocket.scad`; the recipe is in the comment there.
+`RrefAll = 0.785` and `Lref = 16.393` are the bounding box of `rocket.stl`, measured with `openfoam/gen_case.py`'s `stl_bbox()` — the same function that writes `Aref`/`lRef` into each CFD case, so the simulator and the coefficients share one reference by construction. Refresh both after any change to `main.py`'s d_(м i)/L_i or to `rocket.scad`; the recipe is in the comment there.
 
-`Lref` exceeds the 18.24 m stack height by the 3 mm `eps` overhang `rocket.scad` uses to fuse stacked sections into one solid. It scales only `Mz`, which `activeAccel` discards, so its exact value is cosmetic. `RrefAll` is not: it scales every aerodynamic force.
+`Lref` exceeds the 16.39 m stack height by the 3 mm `eps` overhang `rocket.scad` uses to fuse stacked sections into one solid. It scales only `Mz`, which `activeAccel` discards, so its exact value is cosmetic. `RrefAll` is not: it scales every aerodynamic force — which is why the (3.44) shortening was safe to land without a re-sweep: L_i reaches no diameter, so `RrefAll` and therefore `Aref` did not move.
 
 ## Geometry and CFD (`rocket.scad`, `openfoam/`)
 
@@ -114,9 +114,15 @@ The aerodynamic chain is `main.py` → `rocket-params.scad` → `rocket.scad` �
 
 `main.py` owns the dimensions via `rocket-params.scad` (`--write-scad-params`, same contract as `--write-traj-config`: stderr-only warnings, clean stdout). `rocket.scad` holds the shape logic plus the structural constants `main.py` does not compute — the interstage, adapter, nav-module and warhead dimensions.
 
-**Stage 3's outer diameter is stage 2's, not its motor diameter.** Condition (3.43) requires d_м ≥ d_a(1+√2) to seat four nozzles; stage 3 fails it (0.83 < 1.07), so per `archive.typ:636` it keeps its narrow motor and gains an external shell at d_м2. `rocket.scad` encodes this as `d_ext = [d_m[0], d_m[1], d_m[1]]`. Stages 2 and 3 therefore mate flush — there is no 2/3 interstage. This is why the CFD meshed stage 3 at 1.17 m: it was never a mistake, and the existing `stage3up`/`head` coefficients are valid to ~1 %.
+**Every stage now flies at its own motor diameter.** The seating condition
+
+    d_м >= d_a (1 + sqrt(2)) + 2 l_a sin(δ_с)
+
+is satisfied on the motor itself for all three stages (margins 378 / 0.6 / 15 mm at the prototype's δ_с = 8° / 6° / 4°), so the external shell that used to wrap a too-narrow stage 3 is retired and `rocket.scad` sets `d_ext = d_m`. `main.py`'s `STAGES` note explains how stages 2 and 3 buy that fit with their λ_з/ρ_т·u pair. The swing term is the bell alone, `l_a sin δ_с` about the throat — `l_дк` does not enter, which is what leaves stage 2 its 0.6 mm at 6°.
 
 The `Makefile` maps parts to STLs the way `gen_case.py` expects: `all → rocket.stl`, `stage2up`, `stage3up`, `head`. In the STL pattern rule `$(SCAD)` must stay the **first** prerequisite — the recipe passes `$<` to OpenSCAD, and putting `$(PARAMS)` first would render the parameter file instead.
+
+**`openfoam/results/averages.csv` is stale as of the (3.44) change.** L_i dropped 1.44 m in total (7.70/3.95/2.18 → 7.14/3.51/1.75) and the STLs were regenerated, but the coefficients were solved on the old ~18 m mold line and have not been re-swept. This is safe to carry, not free: `RrefAll` is unchanged, so `Aref` still matches what `gen_case.py` non-dimensionalised by and the retained C_x/C_y remain dimensionally consistent — the trajectory is bit-identical, verified by diffing `-metrics`. What is unbounded is fidelity. Less wetted area means the real C_x is lower, so range is pessimistic; but afterbody length also shifts C_y, and the |α| margins sit at 0.1 % of the §4.4 limits, so "conservative on range" does **not** imply "conservative on the α constraints". Only a re-sweep closes that.
 
 Case generation needs only `make` and `openscad`; meshing and solving need OpenFOAM v2512 with HiSA. `sweep.py --dry-run` writes nothing. **Never run `plot_coeffs.py` without a complete sweep** — it rebuilds `averages.csv`, the only surviving CFD result, and a partial set of inputs silently truncates it.
 
