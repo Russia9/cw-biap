@@ -64,6 +64,15 @@ func MetricsJSON(d Diagnostics, lim Limits) string {
 		"lim_eps2":               lim.Eps2,
 		"lim_theta_dot":          lim.PitchRateMax,
 		"lim_qmax":               lim.Qmax,
+		"max_alpha_sep_deg":      d.AlphaSepMax(),
+		"lim_eps_sep":            lim.EpsSep,
+		// §4.1 expects the ascending 94 km crossing during stage 2. Print-only
+		// until now; the optimizer needs it to see the constraint at all. The
+		// margin is what it actually penalises — the stage number is a step and
+		// carries no slope to follow — but both are emitted because the stage
+		// is what §4.1 literally states.
+		"cross_up_stage":    float64(d.CrossUpStage),
+		"cross_up_margin_s": d.CrossUpMargin,
 	}
 	// Marshal fails on a map[string]float64 only for non-finite values, which
 	// a blown-up simulation can produce (NaN/Inf diagnostics). The empty string
@@ -71,6 +80,23 @@ func MetricsJSON(d Diagnostics, lim Limits) string {
 	// the evaluation is scored as failed — exactly what a NaN flight deserves.
 	b, _ := json.Marshal(m)
 	return string(b)
+}
+
+// printSepAlpha reports |α| at one stage separation. The limit only applies
+// inside the atmosphere, so an exempt separation prints its q instead of a
+// verdict rather than being silently dropped — the reader needs to see that the
+// check ran and why it did not bind.
+func printSepAlpha(n int, alpha, q, lim float64) {
+	label := fmt.Sprintf("  |α| at stage-%d sep        ", n)
+	switch {
+	case lim <= 0:
+		fmt.Printf("%s: %6.2f deg   (q=%.0f Pa, no limit configured)\n", label, alpha, q)
+	case q > QSepMin:
+		fmt.Printf("%s: %6.2f deg   (q=%.0f Pa > %.0f, limit %.2f)  %s\n",
+			label, alpha, q, QSepMin, lim, okFlag(alpha, lim))
+	default:
+		fmt.Printf("%s: %6.2f deg   (q=%.0f Pa ≤ %.0f, exempt)\n", label, alpha, q, QSepMin)
+	}
 }
 
 func okFlag(measured, limit float64) string {
@@ -90,6 +116,8 @@ func PrintDiagnostics(d Diagnostics, lim Limits, at *AeroTable) {
 	fmt.Printf("  max |Δϑ/Δt| (active rows) : %6.2f deg/s (limit %.2f)  %s\n", d.MaxPitchRateNum, lim.PitchRateMax, okFlag(d.MaxPitchRateNum, lim.PitchRateMax))
 	fmt.Printf("  |ϑ̇| at stage-1 sep        : %6.3f deg/s (≈0 for smooth separation)\n", d.PitchRateSep1)
 	fmt.Printf("  |ϑ̇| at stage-2 sep        : %6.3f deg/s (≈0 for smooth separation)\n", d.PitchRateSep2)
+	printSepAlpha(1, d.AlphaSep1, d.QSep1, lim.EpsSep)
+	printSepAlpha(2, d.AlphaSep2, d.QSep2, lim.EpsSep)
 	fmt.Printf("  max q                     : %8.1f Pa  (limit %.0f)  %s\n", d.MaxQ, lim.Qmax, okFlag(d.MaxQ, lim.Qmax))
 	fmt.Printf("  (max q at t = %.1f s)\n", d.MaxQt)
 	// Only reported when configured: okFlag treats a zero limit as exceeded, so
@@ -101,7 +129,8 @@ func PrintDiagnostics(d Diagnostics, lim Limits, at *AeroTable) {
 
 	fmt.Println("=== Atmosphere boundary (94 km) ===")
 	if d.CrossUpStage > 0 {
-		fmt.Printf("  crossing UP   : t=%.1f s, H=%.1f km, during stage %d (§4.1 expects stage 2)\n", d.CrossUpTime, d.CrossUpH/1000, d.CrossUpStage)
+		fmt.Printf("  crossing UP   : t=%.1f s, H=%.1f km, during stage %d (§4.1 expects stage 2, margin %+.1f s)\n",
+			d.CrossUpTime, d.CrossUpH/1000, d.CrossUpStage, d.CrossUpMargin)
 	} else {
 		fmt.Println("  crossing UP   : not reached")
 	}

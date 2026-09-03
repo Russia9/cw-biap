@@ -138,12 +138,14 @@ class LayoutTest(unittest.TestCase):
         bad[4 + 1] = 61.0  # first split time (4 angles, then t_в)
         self.assertGreater(self.layout.program_penalty(bad), 0.0)
 
-        # Increasing ϑ across adjacent ϑ arcs: monotonicity violation.
+        # A rising ϑ is NOT penalised: nulling α for an in-atmosphere stage
+        # separation requires exactly that, so the old monotonicity term was
+        # removed rather than exempted.
         bad = list(x0)
         bad[0], bad[1] = 60.0, 80.0
-        self.assertGreater(self.layout.program_penalty(bad), 0.0)
+        self.assertEqual(self.layout.program_penalty(bad), 0.0)
 
-        # Increasing α is allowed — α arcs are exempt from monotonicity.
+        # Rising α likewise costs nothing.
         bad = list(x0)
         bad[2], bad[3] = -1.0, 0.5
         self.assertEqual(self.layout.program_penalty(bad), 0.0)
@@ -190,11 +192,15 @@ class ObjectiveTest(unittest.TestCase):
             "max_pitch_rate_num_dps": 2.0,
             "max_q_pa": 80000.0,
             "apogee_h_km": 1500.0,
+            "max_alpha_sep_deg": 1.0,
+            "cross_up_stage": 2.0,
+            "cross_up_margin_s": 20.0,
             "lim_eps1": 1.5,
             "lim_eps2": 10.0,
             "lim_theta_dot": 3.0,
             "lim_qmax": 120000.0,
             "lim_h_max_km": 1800.0,
+            "lim_eps_sep": 1.5,
         }
 
     def test_on_target_feasible_is_near_zero(self) -> None:
@@ -210,6 +216,51 @@ class ObjectiveTest(unittest.TestCase):
         f = objective(self.layout, runner, self.x0, 12000.0, 0.1)
         self.assertGreater(f, 1e4)
 
+    def test_separation_alpha_violation_is_penalised(self) -> None:
+        m = self.feasible_metrics()
+        m["max_alpha_sep_deg"] = 7.65  # the pre-constraint stage-1 separation
+        runner = StubRunner(m)
+        f = objective(self.layout, runner, self.x0, 12000.0, 0.1)
+        self.assertGreater(f, 1e4)
+
+    def test_exempt_separation_costs_nothing(self) -> None:
+        # The Go side applies the q gate and reports 0 for a separation outside
+        # the atmosphere, so a large α up there must not register as a
+        # violation here.
+        m = self.feasible_metrics()
+        m["max_alpha_sep_deg"] = 0.0
+        runner = StubRunner(m)
+        self.assertAlmostEqual(
+            objective(self.layout, runner, self.x0, 12000.0, 0.1), 0.0
+        )
+
+    def test_crossing_outside_stage_two_is_penalised(self) -> None:
+        m = self.feasible_metrics()
+        m["cross_up_stage"], m["cross_up_margin_s"] = 3.0, -0.9
+        runner = StubRunner(m)
+        f = objective(self.layout, runner, self.x0, 12000.0, 0.1)
+        self.assertGreater(f, 1e4)
+
+    def test_crossing_penalty_grades_with_distance(self) -> None:
+        # Penalising cross_up_stage directly would score these identically and
+        # leave CMA-ES no direction to move; the margin form must rank the near
+        # miss strictly better than the far one.
+        near, far = self.feasible_metrics(), self.feasible_metrics()
+        near["cross_up_margin_s"], far["cross_up_margin_s"] = -0.5, -5.0
+        self.assertLess(
+            objective(self.layout, StubRunner(near), self.x0, 12000.0, 0.1),
+            objective(self.layout, StubRunner(far), self.x0, 12000.0, 0.1),
+        )
+
+    def test_crossing_on_the_staging_instant_is_penalised(self) -> None:
+        # Landing exactly on the boundary must still cost something:
+        # CROSS_MARGIN_S is what keeps the converged solution off the
+        # discontinuity, where a step-size change could flip it.
+        m = self.feasible_metrics()
+        m["cross_up_margin_s"] = 0.0
+        f = objective(self.layout, StubRunner(m), self.x0, 12000.0, 0.1)
+        self.assertGreater(f, 0.0)
+
     def test_sim_error_scores_f_fail(self) -> None:
         runner = StubRunner(SimError("boom", stderr="load config: ..."))
         f = objective(self.layout, runner, self.x0, 12000.0, 0.1)
@@ -217,7 +268,14 @@ class ObjectiveTest(unittest.TestCase):
 
     def test_zero_limits_do_not_divide(self) -> None:
         m = self.feasible_metrics()
-        for key in ("lim_eps1", "lim_eps2", "lim_theta_dot", "lim_qmax", "lim_h_max_km"):
+        for key in (
+            "lim_eps1",
+            "lim_eps2",
+            "lim_theta_dot",
+            "lim_qmax",
+            "lim_h_max_km",
+            "lim_eps_sep",
+        ):
             m[key] = 0.0
         runner = StubRunner(m)
         # Must not raise ZeroDivisionError; zero limits mean no penalty terms.

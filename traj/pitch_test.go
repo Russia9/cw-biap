@@ -207,3 +207,63 @@ func assertClose(t *testing.T, name string, got, want, tol float64) {
 		t.Fatalf("%s: got %.17g, want %.17g", name, got, want)
 	}
 }
+
+// TestHermitePitchSegmentsAreC1 is the property the shape exists for: unlike
+// cos and exp, a Hermite chain does NOT pin ϑ̇ = 0 at its joints, so a ϑ-framed
+// program can track θ̇ across a joint and hold an α plateau.
+func TestHermitePitchSegmentsAreC1(t *testing.T) {
+	p := PitchProgram{
+		TVert: 10,
+		Segments: []PitchSegment{
+			{TEnd: 25, Val: deg(80), Shape: ShapeHermite, K: deg(-0.8)},
+			{TEnd: 66.4, Val: deg(72), Shape: ShapeHermite, K: deg(-0.3)},
+		},
+	}
+
+	assertClose(t, "vertical hold", p.Cmd(10, 0), math.Pi/2, 1e-12)
+	assertClose(t, "first endpoint", p.Cmd(25, 0), deg(80), 1e-12)
+	assertClose(t, "second endpoint", p.Cmd(66.4, 0), deg(72), 1e-12)
+
+	// The terminal rate is the arc's own K...
+	assertClose(t, "first endpoint rate", p.Rate(25, 0), deg(-0.8), 1e-12)
+	assertClose(t, "final endpoint rate", p.Rate(66.4, 0), deg(-0.3), 1e-12)
+	// ...and the next arc enters at exactly that rate, which is C¹.
+	after := math.Nextafter(25, math.Inf(1))
+	assertClose(t, "joint is C1 in value", p.Cmd(after, 0), deg(80), 1e-9)
+	assertClose(t, "joint is C1 in rate", p.Rate(after, 0), deg(-0.8), 1e-9)
+	// The first arc enters at rate 0, matching the vertical hold it leaves.
+	assertClose(t, "entry rate from vertical hold", p.Rate(math.Nextafter(10, math.Inf(1)), 0), 0, 1e-9)
+}
+
+// TestHermiteRateMatchesFiniteDifference guards the analytic derivative, which
+// feeds the §4.4 pitch-rate check directly.
+func TestHermiteRateMatchesFiniteDifference(t *testing.T) {
+	p := PitchProgram{
+		TVert: 5,
+		Segments: []PitchSegment{
+			{TEnd: 30, Val: deg(70), Shape: ShapeHermite, K: deg(-1.2)},
+			{TEnd: 60, Val: deg(40), Shape: ShapeHermite, K: deg(-0.5)},
+		},
+	}
+	const h = 1e-6
+	for _, tt := range []float64{7, 12.5, 20, 29.9, 31, 45, 59.5} {
+		fd := (p.Cmd(tt+h, 0) - p.Cmd(tt-h, 0)) / (2 * h)
+		assertClose(t, "rate at t", p.Rate(tt, 0), fd, 1e-6)
+	}
+}
+
+// TestHermiteWithZeroRatesIsRatePinned pins the degenerate case: K = 0 on every
+// arc reproduces the joint behaviour of the older shapes, so the new shape is a
+// strict generalization rather than a different law.
+func TestHermiteWithZeroRatesIsRatePinned(t *testing.T) {
+	p := PitchProgram{
+		TVert: 0,
+		Segments: []PitchSegment{
+			{TEnd: 10, Val: deg(60), Shape: ShapeHermite, K: 0},
+		},
+	}
+	assertClose(t, "endpoint rate", p.Rate(10, 0), 0, 1e-12)
+	assertClose(t, "start rate", p.Rate(math.Nextafter(0, math.Inf(1)), 0), 0, 1e-9)
+	// Midpoint of a zero-slope Hermite is the plain average (smoothstep at s=0.5).
+	assertClose(t, "midpoint", p.Cmd(5, 0), (math.Pi/2+deg(60))/2, 1e-12)
+}

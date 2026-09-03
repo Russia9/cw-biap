@@ -59,6 +59,14 @@ L_FULL = 12000
 # 12 419 km with every §4.4 check satisfied — against 11 462 km for the best of
 # six ϑ-framed searches at the same mass and the same CFD table.
 #
+# 2026-09 update: that ϑ-frame verdict was a property of the arc *shapes*, not
+# of the frame. ShapeHermite carries the arc's terminal rate as its free
+# parameter instead of a shape exponent, so joints are C¹ and no longer pin
+# ϑ̇ = 0 — a ϑ-framed program can now track θ̇ across a joint and hold α after
+# all. Converted from the α-framed optimum and re-searched, the 24-arc ϑ-framed
+# Hermite program reaches 12 749 km against 12 706 km α-framed, so the design is
+# now a genuine open-loop ϑ_пр(t): α is an output, not a command.
+#
 # That program measures k_V = 1.176 against this design value of 1.187, so the
 # sizing is conservative, sits in the lower half of the Аппазов band as the
 # range argues for, and lands near his §5.2 worked example's 1.165. 1.187 is

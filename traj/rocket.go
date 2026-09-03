@@ -35,6 +35,11 @@ type Limits struct {
 	PitchRateMax float64 `json:"theta_dot_max"`
 	Qmax         float64 `json:"qmax"`  // dynamic-pressure limit [Pa]
 	HMax         float64 `json:"h_max"` // max trajectory ordinate (apogee) [m]; 0 disables
+	// EpsSep limits |α| [deg] at a stage separation that happens inside the
+	// atmosphere (q > QSepMin). Kept separate from Eps1 even though both are
+	// 1.5° today: they govern different things (a subsonic flight envelope vs
+	// a staging event) and would drift apart if either is retuned. 0 disables.
+	EpsSep float64 `json:"eps_sep"`
 }
 
 // Rocket bundles the full configuration handed to the simulator: the stage

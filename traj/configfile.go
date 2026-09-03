@@ -178,7 +178,17 @@ func arcShape(a jsonArc) (Shape, float64, error) {
 			k = *a.K
 		}
 		return ShapeCos, k, nil
+	case "hermite":
+		// For this shape "k" is not an exponent but the arc's terminal rate,
+		// and it is written in deg/s to match the degree-valued angle fields
+		// beside it. Every other shape's k is dimensionless, so this is the one
+		// place the key changes meaning — see PitchSegment.K.
+		k := defaultKHermite
+		if a.K != nil {
+			k = deg(*a.K)
+		}
+		return ShapeHermite, k, nil
 	default:
-		return 0, 0, fmt.Errorf("unknown shape %q (want \"exp\" or \"cos\")", a.Shape)
+		return 0, 0, fmt.Errorf("unknown shape %q (want \"exp\", \"cos\" or \"hermite\")", a.Shape)
 	}
 }

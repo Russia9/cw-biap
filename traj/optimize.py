@@ -56,12 +56,26 @@ SCALE_L = 100.0
 W_CON = 1.0e7
 F_FAIL = 1.0e15
 CON_MARGIN = 1.0e-3
-W_MONO = 10.0
 W_TIME = 1000.0
+# §4.1 places the ascending 94 km crossing inside the stage-2 burn.
+# CROSS_MARGIN_S is the CON_MARGIN analogue in seconds: require the crossing
+# that far inside the window so a step-size change at verification cannot flip
+# it across a staging instant. CROSS_SCALE_S normalises the shortfall so that
+# landing one scale outside costs about what a 100 % relative excess costs on
+# the other limits — penalising the *stage number* directly would instead make
+# a 0.05 s miss cost 1e7, a hundred times a doubled max-q, and would leave the
+# search no gradient to slide along the boundary once it was on the wrong side.
+CROSS_MARGIN_S = 0.5
+CROSS_SCALE_S = 10.0
 # Must mirror defaultKExp/defaultKCos in traj/pitch.go — the Go parser applies
 # these same defaults to arcs that leave "k" unset.
 DEFAULT_K_EXP = 3.0
 DEFAULT_K_COS = 1.1
+# hermite: "k" is not an exponent but the arc's terminal pitch rate [deg/s], so
+# its bound is the §4.4 rate limit itself rather than a shape range. That makes
+# the rate limit almost structural instead of only penalised.
+DEFAULT_K_HERMITE = 0.0
+K_HERMITE_BOUND = 3.0
 
 # The CMA-ES state is checkpointed every this many iterations (matching the
 # verb_disp progress cadence), so an interrupted search resumes via --resume
@@ -92,10 +106,22 @@ def angle_key(frame: str) -> str:
     return "alpha_deg" if frame == "alpha" else "theta_deg"
 
 
+_DEFAULT_K = {"cos": DEFAULT_K_COS, "exp": DEFAULT_K_EXP, "hermite": DEFAULT_K_HERMITE}
+
+
 def arc_k(arc: Config) -> float:
     if "k" in arc:
         return arc["k"]
-    return DEFAULT_K_COS if arc_shape(arc) == "cos" else DEFAULT_K_EXP
+    return _DEFAULT_K.get(arc_shape(arc), DEFAULT_K_EXP)
+
+
+def k_bounds(shape: str) -> tuple[float, float]:
+    """Bounds for an arc's "k", which changes meaning with the shape."""
+    if shape == "hermite":
+        return (-K_HERMITE_BOUND, K_HERMITE_BOUND)  # terminal rate [deg/s]
+    if shape == "cos":
+        return (1.0, 8.0)  # exponent; below minKCos the Go side clamps silently
+    return (-8.0, 8.0)
 
 
 @dataclass(frozen=True)
@@ -241,13 +267,13 @@ class Layout:
         angle_low, angle_high = zip(
             *(ANGLE_BOUNDS[sp.frame] for sp in self.specs), strict=True
         )
-        k_low = [
-            1.0 if arc_shape(self.base_arc(sp)) == "cos" else -8.0
-            for sp in self.specs
-        ]
+        # "k" means different things per shape, so its box is per-arc.
+        k_low, k_high = zip(
+            *(k_bounds(arc_shape(self.base_arc(sp))) for sp in self.specs),
+            strict=True,
+        )
         split_low = [sp.stage_start + 1.0 for sp in self.splits]
         split_high = [sp.stage_end - 0.1 for sp in self.splits]
-        n_arcs = len(self.specs)
         # An entry angle lives in its arc's own frame (configfile.go reads
         # theta0_deg as the raw entry value), so α-framed entries get the α
         # bounds — 0..89° would be nonsense for a deviation angle.
@@ -261,16 +287,22 @@ class Layout:
         ]
         return (
             [*angle_low, 5.0, *split_low, *k_low, *entry_low],
-            [*angle_high, 40.0, *split_high, *([8.0] * n_arcs), *entry_high],
+            [*angle_high, 40.0, *split_high, *k_high, *entry_high],
         )
 
     def cma_stds(self) -> list[float]:
         n_arcs = len(self.specs)
+        # A hermite "k" is a rate in deg/s spanning ±3, not an exponent spanning
+        # ±8, so it needs a proportionally smaller step.
+        k_std = [
+            0.5 if arc_shape(self.base_arc(sp)) == "hermite" else 3.0
+            for sp in self.specs
+        ]
         return [
             *([10.0] * n_arcs),
             8.0,
             *([8.0] * len(self.splits)),
-            *([3.0] * n_arcs),
+            *k_std,
             *([8.0] * len(self.entries)),
         ]
 
@@ -293,15 +325,14 @@ class Layout:
             f += W_TIME * max(0.0, (prev + 0.1 - end) / 10.0) ** 2
             prev = end
 
-        # Keep the program physical: expect pitch terminal angles to decrease
-        # with time across the flattened powered program. α arcs are exempt — α
-        # is a deviation from the flight path, not a monotone attitude, and it
-        # has to be free to relax back toward zero as the atmosphere thins.
-        f += W_MONO * sum(
-            max(0.0, p.angles[i + 1] - p.angles[i]) ** 2
-            for i in range(len(p.angles) - 1)
-            if self.specs[i].frame == "theta" and self.specs[i + 1].frame == "theta"
-        )
+        # There is deliberately no monotonicity term on ϑ. It used to expect the
+        # terminal angles of ϑ-framed arcs to decrease with time, exempting α
+        # arcs. That assumption died with the in-atmosphere separation limit:
+        # nulling α to ≤1.5° for the stage-1 separation *requires* ϑ to rise
+        # while θ keeps falling, and on the converted ϑ-framed program that
+        # manoeuvre alone scored 236 — more than the entire range term. The rule
+        # also never fired on the shipped α-framed configs, so dropping it
+        # changes no previous result.
         return f
 
     def format_params(self, x: Sequence[float]) -> str:
@@ -432,6 +463,18 @@ def objective(
     f += W_CON * pen(m["max_pitch_rate_num_dps"], m["lim_theta_dot"])
     f += W_CON * pen(m["max_q_pa"], m["lim_qmax"])
     f += W_CON * pen(m["apogee_h_km"], m.get("lim_h_max_km", 0.0))
+    # |α| at a separation inside the atmosphere. The Go side already applied the
+    # q gate, so an exempt separation arrives as 0 and costs nothing.
+    f += W_CON * pen(m["max_alpha_sep_deg"], m.get("lim_eps_sep", 0.0))
+    # §4.1: the ascending 94 km crossing must fall inside the stage-2 burn.
+    # Graded on seconds inside that window (negative outside), one-sided like
+    # every other limit here. De-lofting to buy range pushes the crossing later,
+    # straight at this boundary, so the search needs to be able to slide along
+    # it rather than hit a wall.
+    f += (
+        W_CON
+        * max(0.0, (CROSS_MARGIN_S - m["cross_up_margin_s"]) / CROSS_SCALE_S) ** 2
+    )
     return f
 
 
@@ -630,7 +673,10 @@ def run_search(args: argparse.Namespace, layout: Layout, runner: SimRunner) -> N
         f"ϑ̇={m['max_pitch_rate_dps']:.2f}~{m['max_pitch_rate_num_dps']:.2f}"
         f"/{m['lim_theta_dot']:.2f} "
         f"q={m['max_q_pa'] / 1000:.1f}/{m['lim_qmax'] / 1000:.0f} kPa "
-        f"H={m['apogee_h_km']:.0f}/{m.get('lim_h_max_km', 0):.0f} km"
+        f"H={m['apogee_h_km']:.0f}/{m.get('lim_h_max_km', 0):.0f} km "
+        f"|α|sep={m['max_alpha_sep_deg']:.2f}/{m.get('lim_eps_sep', 0):.2f} "
+        f"cross=stage{m.get('cross_up_stage', 0):.0f}"
+        f"({m['cross_up_margin_s']:+.1f}s)"
     )
 
     # Final fine-step run: writes out/traj.csv and prints the full diagnostics.

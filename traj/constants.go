@@ -24,6 +24,16 @@ const (
 	// atmosphere model returns vacuum — the same boundary the §4.4 crossing
 	// diagnostics report against.
 	Hatm = atmosphere.HBoundary
+	// QSepMin is the dynamic pressure [Pa] above which a stage separation
+	// counts as happening "inside the atmosphere" for the |α| separation
+	// limit. The gate is on q rather than on H because separation loads are a
+	// dynamic-pressure phenomenon: an H ≤ Hatm gate would sit within metres of
+	// the 2/3 separation (H = 92.8…96.7 km across nearby designs), flipping the
+	// constraint on and off with sub-second timing changes, and it would reward
+	// lofting that separation above 94 km purely to escape the limit. At 1 kPa
+	// the stage-1 separation (q ≈ 13 kPa) is 13× inside the gate and the stage-2
+	// one (q ≤ 21 Pa) is far outside it, so the classification is stable.
+	QSepMin = 1000.0
 )
 
 const (

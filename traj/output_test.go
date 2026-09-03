@@ -22,9 +22,11 @@ func TestMetricsJSONContract(t *testing.T) {
 	want := []string{
 		"apogee_h_km", "apogee_t_s",
 		"burnout_h_km", "burnout_theta_deg", "burnout_v",
+		"cross_up_margin_s", "cross_up_stage",
 		"ground_hit_stage", "impact_range_km", "impact_t_s",
-		"lim_eps1", "lim_eps2", "lim_h_max_km", "lim_qmax", "lim_theta_dot",
-		"max_alpha_sub_deg", "max_alpha_sup_deg",
+		"lim_eps1", "lim_eps2", "lim_eps_sep",
+		"lim_h_max_km", "lim_qmax", "lim_theta_dot",
+		"max_alpha_sep_deg", "max_alpha_sub_deg", "max_alpha_sup_deg",
 		"max_pitch_rate_dps", "max_pitch_rate_num_dps", "max_q_pa",
 	}
 	got := make([]string, 0, len(m))

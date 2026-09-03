@@ -11,7 +11,11 @@ Coursework for BIAP (ballistic/thrust design of a solid-fuel three-stage rocket)
 3. `rocket.scad` turns the same dimensions into STLs, which `openfoam/` meshes and sweeps into the aerodynamic coefficient table.
 4. The Go simulator under `traj/` flies the resulting design against that table and checks it against the §4.4 constructive-ballistic limits.
 
-Design point at HEAD: m₀ = 29 724 kg, full range 12 418 km, burnout V = 7362 m/s, H = 181.5 km, θ = 20.2°.
+Design point at HEAD: m₀ = 29 724 kg, full range 12 749 km, burnout V = 7388 m/s, H = 169.8 km, θ = 17.5°.
+The pitch program is a genuine open-loop ϑ_пр(t): 24 C¹ Hermite arcs, all three
+stages `"steering": "theta"`, so α is an output of the trajectory rather than a
+commanded quantity. See the 2026-09 note in `main.py`'s K_V block for why the
+earlier α-framed parameterisation was needed and what replaced it.
 
 ## Running scripts
 
@@ -19,6 +23,7 @@ Design point at HEAD: m₀ = 29 724 kg, full range 12 418 km, burnout V = 7362 m
 uv run python main.py        # thrust/weights/geometry → Typst math blocks + tables
 uv run python preliminary.py # burn-rate and l_z/alpha_dv preliminary tables
 uv run python main.py --write-traj-config  # resync traj/rocket.json with main.py
+uv run python aero_tables.py  # CFD coefficients → Typst tables (α rows × M columns)
 uv run pyright               # type-check all Python (standard mode)
 
 cd traj
@@ -78,13 +83,18 @@ The model is 3-DOF with a **programmed** pitch angle: `AeroForces` returns a pit
 
 The CFD table is `openfoam/results/averages.csv` (part keys `all`, `stage2up`, `stage3up`, `head`, with fallbacks in `aero.go`), and it must be passed: `-aero=<averages.csv>` for the simulator, `--aero=<averages.csv>` for `optimize.py`. Without the flag `traj.ZeroAero()` supplies an empty table, so drag, lift and pitch moment are all zero — the force path in `model.go` is unchanged, it just multiplies by zero.
 
-The pitch program in `rocket.json` was optimized *with* the table, so a drag-free run does not reproduce the reported result: the same config reports 12 747 km instead of 12 418 km and **violates two §4.4 limits** (max |α| 1.64° vs 1.50° subsonic, 16.0° vs 10.0° supersonic). Lift is what turns the vehicle inside those |α| limits, so removing the table is not a conservative simplification.
+The pitch program in `rocket.json` was optimized *with* the table, so a drag-free run does not reproduce the reported result: the same config reports 13 010 km instead of 12 749 km and **violates two §4.4 limits** (max |α| 1.83° vs 1.50° subsonic, 17.07° vs 10.00° supersonic). Lift is what turns the vehicle inside those |α| limits, so removing the table is not a conservative simplification — and now that the program is ϑ-framed, α is an output, so a drag-free run changes it directly.
 
 ### The design sits on the §4.4 boundary
 
 The pitch program was optimized flat against the constraints, so there is no robustness margin except on q (76 kPa of 120 kPa). Any change to masses, impulses, the aero table or the reference area makes it infeasible rather than merely suboptimal. Re-run `optimize.py` and check the diagnostics before reporting a result.
 
-**Currently four §4.4 checks read EXCEEDS** at 12 427 km: both |α| limits (1.5013° vs 1.50 subsonic, 10.036° vs 10.00 supersonic), the finite-difference pitch rate (3.03 vs 3.00 °/s), and the apogee (1897.7 vs 1800 km). The α pair surfaced when `RrefAll` was corrected from 0.795 to the CFD's actual 0.79 — the old value inflated `Aref` by 1.25 %, and the extra lift was holding α inside the limits; the violations are pre-existing, not introduced by the correction. Fixing them means re-optimizing the pitch program (warm-started from `rocket.json`, `--maxiter` ≥ 1500, several seeds).
+**Every §4.4 check currently reads OK** at 12 749 km, but four of them sit within 0.2 % of their limit: |α| subsonic 1.4985/1.50, |α| supersonic 9.9887/10.00, and both pitch rates 2.9968/3.00. Only q (34 % margin) and the apogee (6 %) have real room. The |α| limits are now *derived* rather than commanded — the program steers ϑ — which makes them the sharpest test that a change has not broken anything. Two further constraints bind:
+
+- **|α| ≤ 1.5° at any separation inside the atmosphere** (`eps_sep`), gated on q > `QSepMin` = 1 kPa rather than on altitude — separation loads are a dynamic-pressure phenomenon, and an H ≤ 94 km gate would sit within metres of the 2/3 separation and flip on sub-second timing changes. In practice only the 1/2 separation qualifies (q ≈ 15 kPa); the 2/3 one is exempt at q ≈ 0. Measured at 1.4973/1.50.
+- **§4.1's 94 km ascending crossing must fall in the stage-2 burn.** Penalised on `CrossUpMargin` (seconds inside that window, negative outside) rather than on the stage number, which is a step with no gradient to follow. The optimum converges onto `CROSS_MARGIN_S` = 0.5 s by construction, keeping it clear of the staging discontinuity.
+
+Any change to masses, impulses, the aero table or the reference area makes this infeasible rather than merely suboptimal. Re-optimize (warm-started from `rocket.json`, `--maxiter` ≥ 3000, several seeds at σ0 = 0.02…0.10) and read the full diagnostics before reporting a result.
 
 ### Optimizer loop is not automatic
 

@@ -17,6 +17,17 @@ def fmt(x):
     return str(int(x)) if x == int(x) else f"{x:g}"
 
 
+def comment(title):
+    """Print a cut marker naming the block that follows::
+
+        // ===== Геометрия зарядов и сопел =====
+
+    The markers delimit the snippets to paste into the report; they are not
+    part of the Typst source itself.
+    """
+    print(f"// ===== {title} =====")
+
+
 def section(title, formulas):
     """Open an output section: a comment separator plus the marker line naming
     the formula range it covers, e.g.::
@@ -28,7 +39,7 @@ def section(title, formulas):
     Only substituted calculations and tables follow — the symbolic formulas
     themselves live in the report document, not in this output.
     """
-    print(f"// ===== {title} =====")
+    comment(title)
     print()
     print(f"Проведем расчеты для всех ступеней по формулам ${formulas}$:")
     print()
@@ -70,3 +81,25 @@ def param_table(rows, headers=("I ступень", "II ступень", "III с�
     for row in rows:
         print(row)
     print("  ),")
+
+
+def coeff_table(alphas, machs, cells, caption):
+    """Print a captioned Typst ``#figure`` around a coefficient grid: one row
+    per angle of attack, one column per Mach number, under a two-line header.
+
+    `cells[i][j]` is the already-formatted cell for `alphas[i]`, `machs[j]`.
+    """
+    print("#figure(")
+    print("  table(")
+    print(f"    columns: {len(machs) + 1},")
+    print("    fill: (x, y) => if (y == 0 or y==1 or x==0) { luma(220) } else {white},")
+    print("    table.header(")
+    print("      table.cell(rowspan: 2, $alpha, degree$),")
+    print(f"      table.cell(colspan: {len(machs)}, $M$),")
+    print("      " + ", ".join(f"${m:.1f}$" for m in machs) + ",")
+    print("    ),")
+    for alpha, row in zip(alphas, cells):
+        print(f"    ${alpha:.1f}$, " + ", ".join(row) + ",")
+    print("  ),")
+    print(f"  caption: [{caption}]")
+    print(")")
