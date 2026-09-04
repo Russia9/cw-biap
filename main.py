@@ -224,6 +224,12 @@ N_NOZZLES = 4  # number of nozzles per stage n_с (prototype: 4 gimbaled nozzles
 # sized against it, and it is what picks their λ_з/ρ_т·u pair — see STAGES.
 DELTA_C_DEG = [8.0, 6.0, 4.0]
 H_RUDDER = 0.2  # end-rudder protrusion h, the third term of (3.44), m
+# (3.43) bottoms-length fraction l_дн/d_м per stage, from the 0.1–0.2 band.
+# Stage I takes the upper end — its aft dome is the deepest of the three: the
+# largest chamber pressure and the widest nozzle swing (δ_с = 8°) sit on it.
+# Stages II and III take the lower end. l_дн is reported only; it feeds neither
+# (3.44) nor the mold line, so the choice does not move any downstream result.
+K_DN = [0.2, 0.1, 0.1]
 
 CHART_FA = "assets/chart-3-5-fa-fkp-pa-pk.csv"
 CHART_DTZ = "assets/chart-3-6-delta-tz-d-m.csv"
@@ -507,7 +513,7 @@ def calc_geometry(i: int, d: float) -> Geometry:
     l_dk = (d_vh - d_kr) / 2 * cot_beta  # (3.40) convergent length
     l_a = (d_a - d_kr) / 2 * cot_beta  # (3.41) divergent length
     d_v = 0.2 * d  # (3.42) igniter diameter
-    l_dn = 0.2 * d  # (3.43) bottoms length
+    l_dn = K_DN[i - 1] * d  # (3.43) bottoms length
     L = l_zi + l_a + H_RUDDER  # (3.44) stage length
 
     return Geometry(
@@ -803,7 +809,9 @@ def emit_geometry(d_m: list[float]) -> list[Geometry]:
             f' dot ctg({BETA_C_DEG}°) = {g.l_a:.3f} "м"'
         )
         emit(f'd_(в {i}) = 0.2 dot {d:.2f} = {g.d_v:.3f} "м"')
-        emit(f'l_("дн" {i}) approx 0.2 dot {d:.2f} = {g.l_dn:.3f} "м"')
+        emit(
+            f'l_("дн" {i}) approx {K_DN[i - 1]} dot {d:.2f} = {g.l_dn:.3f} "м"'
+        )
         emit(f'L_{i} = {g.l_zi:.2f} + {g.l_a:.3f} + {H_RUDDER} = {g.L:.2f} "м"')
         print()
 
