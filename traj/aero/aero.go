@@ -2,7 +2,7 @@ package aero
 
 import (
 	"fmt"
-	"io"
+	"os"
 
 	na "github.com/Russia9/numerical-analysis"
 	"github.com/gocarina/gocsv"
@@ -23,9 +23,15 @@ type Aero struct {
 	Cd, Cl, CmPitch AeroCoefficient
 }
 
-func LoadCSV(reader io.Reader) (map[string]*Aero, error) {
+func LoadCSV(path string) (map[string]*Aero, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("file: %w", err)
+	}
+	defer f.Close()
+
 	var rows []csvRow
-	if err := gocsv.Unmarshal(reader, &rows); err != nil {
+	if err := gocsv.UnmarshalFile(f, &rows); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
 
@@ -41,8 +47,8 @@ func LoadCSV(reader io.Reader) (map[string]*Aero, error) {
 		}
 
 		rawCd[row.Part] = append(rawCd[row.Part], na.Point3D{X: row.Ma, Y: row.Alpha, Z: row.Cd})
-		rawCl[row.Part] = append(rawCl[row.Part], na.Point3D{X: row.Ma, Y: row.Alpha, Z: row.Cd})
-		rawCmPitch[row.Part] = append(rawCmPitch[row.Part], na.Point3D{X: row.Ma, Y: row.Alpha, Z: row.Cd})
+		rawCl[row.Part] = append(rawCl[row.Part], na.Point3D{X: row.Ma, Y: row.Alpha, Z: row.Cl})
+		rawCmPitch[row.Part] = append(rawCmPitch[row.Part], na.Point3D{X: row.Ma, Y: row.Alpha, Z: row.CmPitch})
 	}
 
 	res := make(map[string]*Aero, len(rawCd))
