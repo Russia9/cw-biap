@@ -1,7 +1,3 @@
-// Package atmosphere implements the GOST 4401-81 standard atmosphere
-// (vendored from the obla-cw-example project). Above the conditional
-// atmosphere boundary (94 km) it returns vacuum (rho=0, p=0) so the
-// vacuum flight segments integrate cleanly instead of panicking.
 package atmosphere
 
 import "math"
@@ -23,23 +19,10 @@ var input = []inputParam{
 	{47000, 270.65, 0, 28.964420, 110.906},
 	{51000, 270.65, -0.0028, 28.964420, 66.9384},
 	{71000, 214.65, -0.0020, 28.964420, 3.95639},
-	// The 85000 row was corrected 2026-08 against the printed GOST 4401-81
-	// tables: the 85-94 km' layer is isothermal (beta = 0, not -0.0020), and
-	// the anchor pressure is the barometric continuation of the 71000 layer
-	// (the previous 0.341546 was the printed pressure at *geometric* 86500 m,
-	// transcribed into the geopotential anchor's slot by mistake). With these
-	// values the model reproduces the printed 85-92 km pressures to within
-	// 0.05 % (see gost_test.go).
 	{85000, 186.65, 0, 28.964420, 0.363409},
-	// Only T is read from this row (the vacuum branch above HBoundary; the
-	// layer loop can never select it as a base). The printed T at 94 km
-	// geometric is 186.644 K — the standard's molecular correction near the
-	// top; 186.650 keeps the handoff from the isothermal layer exactly
-	// continuous, which is what the Mach number cares about.
 	{94000, 186.650, 0, 28.964420, 0.089925},
 }
 
-// HBoundary is the conditional upper edge of the atmosphere [m].
 const HBoundary = 94000.0
 
 const REarth = 6356767.0
@@ -56,8 +39,7 @@ func Atmosphere(h float64) (H, rho, p, T, g, a float64) {
 	const R = 287.05287
 	const k = 1.4
 
-	// Above the conditional atmosphere boundary: vacuum.
-	if h > HBoundary {
+	if h > HBoundary { // vacuum
 		top := input[len(input)-1]
 		H = REarth * h / (REarth + h)
 		T = top.T
@@ -65,12 +47,11 @@ func Atmosphere(h float64) (H, rho, p, T, g, a float64) {
 		a = math.Sqrt(k * R * T)
 		return H, 0, 0, T, g, a
 	}
-	// Below the table (only reached at/near ground impact): clamp.
 	if h < -2000 {
 		h = -2000
 	}
 
-	// Calculate the geopotential height: H = rh/(r+h)
+	// Geopotential height: H = rh/(r+h)
 	H = REarth * h / (REarth + h)
 
 	// Determine the layer

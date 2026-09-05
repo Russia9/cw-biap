@@ -1,9 +1,0 @@
-part,regime,Ma,alpha,n_iters,Cd_mean,Cd_std,Cl_mean,Cl_std,Cs_mean,Cs_std,CmPitch_mean,CmPitch_std,CmRoll_mean,CmRoll_std,CmYaw_mean,CmYaw_std
-all,subsonic,0.4,0,50,0.30,0,0.00,0,0,0,-0.00,0,0,0,0,0
-all,subsonic,0.4,5,50,0.32,0,0.40,0,0,0,-0.50,0,0,0,0,0
-all,subsonic,0.4,10,50,0.40,0,0.90,0,0,0,-1.10,0,0,0,0,0
-all,supersonic,2.0,0,50,0.60,0,0.00,0,0,0,-0.00,0,0,0,0,0
-all,supersonic,2.0,5,50,0.70,0,0.60,0,0,0,-0.80,0,0,0,0,0
-all,supersonic,2.0,10,50,0.90,0,1.30,0,0,0,-1.70,0,0,0,0,0
-stage3up,hypersonic,15,0,60,0.20,0,0.00,0,0,0,-0.00,0,0,0,0,0
-stage3up,hypersonic,15,10,60,0.35,0,0.55,0,0,0,-0.60,0,0,0,0,0
