@@ -48,9 +48,6 @@ GEN_CASE = HERE / "gen_case.py"
 
 PART_STL = {  # Makefile target per part (mirrors gen_case.PART_STL)
     "all": "rocket.stl",
-    "stage2up": "stage2up.stl",
-    "stage3up": "stage3up.stl",
-    "head": "head.stl",
 }
 
 # --- sweep matrix ----------------------------------------------------------
