@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 )
 
 type Rocket struct {
@@ -53,6 +54,17 @@ func LoadRocketJSON(path string) (Rocket, error) {
 			return Rocket{}, fmt.Errorf("stage is powered but not controlled")
 		}
 	}
+
+	// Sort arcs by TEnd (asecnding)
+	slices.SortFunc(r.Pitch.Segments, func(a, b PitchSegment) int {
+		if a.TEnd > b.TEnd {
+			return 1
+		} else if a.TEnd == b.TEnd {
+			return 0
+		} else {
+			return -1
+		}
+	})
 
 	return r, nil
 }

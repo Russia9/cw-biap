@@ -45,12 +45,15 @@
       "controlled": false
     }
   ],
-  "pitch": [
+  "pitch": {
+    "theta_deg_start": 90,
+    "t_start": 5,
+    "segments": [
     { "t_end": 10.0, "shape": "cos", "k": 3.0, "theta_deg": 90.0 },
     { "t_end": 40.0, "shape": "cos", "k": 3.0, "theta_deg": 72.0 },
     { "t_end": 65.0, "shape": "cos", "k": 3.0, "theta_deg": 60.0 },
     { "t_end": 108.0, "shape": "cos", "k": 3.0, "theta_deg": 42.0 },
     { "t_end": 139.0, "shape": "cos", "k": 3.0, "theta_deg": 25.0 },
-    { "shape": "cos", "k": 3.0, "theta_deg": 20.0 }
-  ]
+    { "t_end": 1000.0, "shape": "cos", "k": 3.0, "theta_deg": 20.0 }
+  ]}
 }
