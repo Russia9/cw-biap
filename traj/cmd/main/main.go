@@ -46,7 +46,7 @@ func main() {
 	}
 	stop := func(x float64, y ...float64) (half bool, stop bool) {
 		h := traj.Altitude(y...)
-		if traj.Eq(h, 0) {
+		if traj.Eq(h, 0, 1e-9) {
 			return false, true
 		} else if h < 0 {
 			return true, false
@@ -55,7 +55,7 @@ func main() {
 	}
 
 	// Run calculation
-	res, err := na.RungeKuttaMethod(model, 0, []float64{0, 0, 0, 0, rocket.Stages[0].M0}, tChar, h, stop)
+	res, err := na.RungeKuttaMethod(model, 0, []float64{0, 0, 0, 0}, tChar, h, stop)
 	if err != nil {
 		panic(fmt.Errorf("rk4: %w", err))
 	}
