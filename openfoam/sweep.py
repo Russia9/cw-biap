@@ -55,7 +55,7 @@ PART_STL = {  # Makefile target per part (mirrors gen_case.PART_STL)
 # listed in priority order; the second item of each pair flags a *preferential*
 # value (the parenthesised ones in the study request). A case is preferential
 # iff BOTH its Ma and its alpha are preferential.
-PARTS = ["all", "stage2up", "stage3up", "head"]
+PARTS = ["all"]
 SWEEP: dict[str, dict[str, list[tuple[float, int]]]] = {
     "all": {
         "Ma": [(0.4, 1), (0.7, 0), (0.9, 1), (1.1, 1), (1.2, 0), (1.5, 1), (2,0), (3.0, 0), (5.0,0), (8, 0), (11, 1)],
