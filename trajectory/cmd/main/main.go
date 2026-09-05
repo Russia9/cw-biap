@@ -91,7 +91,7 @@ func main() {
 	}
 	defer out.Close()
 
-	out.WriteString("t,m,x,y,Vx,Vy,V,r,h,pitch,flightAngle,attack\n")
+	out.WriteString("t,stage,m,x,y,Vx,Vy,V,r,h,pitch,flightAngle,attack\n")
 	for i := range res[0] {
 		t := res[0][i].X                   // Current time
 		stI := traj.StageIndex(r, true, t) // Stage index
@@ -111,8 +111,8 @@ func main() {
 			attack = 0
 		}
 
-		fmt.Fprintf(out, "%.3f,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e\n",
-			t,
+		fmt.Fprintf(out, "%.3f,%d,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e\n",
+			t, stI,
 			traj.Mass(st, t, traj.StageT0(r, stI)),
 			res[traj.IX][i].Y, res[traj.IY][i].Y,
 			res[traj.IVx][i].Y, res[traj.IVy][i].Y,
