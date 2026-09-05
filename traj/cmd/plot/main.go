@@ -20,10 +20,10 @@ func main() {
 	p := plot.New()
 
 	p.Title.Text = "Pitch program"
-	p.X.Label.Text = "X"
-	p.Y.Label.Text = "Y"
+	p.X.Label.Text = "t, с"
+	p.Y.Label.Text = "theta, deg"
 
-	pitch := plotter.NewFunction(rocket.Pitch.Pitch)
+	pitch := plotter.NewFunction(func(t float64) float64 { return rocket.Pitch.Pitch(t) * 180 / math.Pi })
 	pitch.Samples = 1000
 	p.Add(pitch)
 
@@ -34,10 +34,10 @@ func main() {
 	p.X.Min = 0
 	p.X.Max = 150
 	p.Y.Min = 0
-	p.Y.Max = math.Pi
+	p.Y.Max = 180
 
 	// Save the plot to a PNG file.
-	if err := p.Save(15*vg.Inch, 8*vg.Inch, "functions.png"); err != nil {
+	if err := p.Save(15*vg.Inch, 8*vg.Inch, "out/pitch.png"); err != nil {
 		panic(err)
 	}
 }

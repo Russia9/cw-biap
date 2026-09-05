@@ -17,8 +17,8 @@ const (
 	iM  = 4
 )
 
-// altitude H = R − Rz [m].
-func altitude(y ...float64) float64 { return math.Hypot(y[iX], Rz+y[iY]) - Rz }
+// Altitude H = R − Rz [m].
+func Altitude(y ...float64) float64 { return math.Hypot(y[iX], Rz+y[iY]) - Rz }
 
 // VelMag returns |V| [m/s].
 func VelMag(y ...float64) float64 { return math.Hypot(y[iVx], y[iVy]) }
@@ -40,7 +40,7 @@ func gravity(y ...float64) (gx, gy float64) {
 func stage(r Rocket, fromRight bool, t float64) int {
 	time := 0.
 	for i, st := range r.Stages {
-		if eq(time+st.BurnTime, t) { // if we are at the stage separation event
+		if Eq(time+st.BurnTime, t) { // if we are at the stage separation event
 			if fromRight {
 				return i + 1
 			}
@@ -64,7 +64,7 @@ func accel(r Rocket, aero map[string]*aero.Aero, fromRight bool, t float64, y ..
 	st := r.Stages[stage(r, fromRight, t)]
 
 	// atmosphere
-	_, rho, p, _, _, a := atmosphere.Atmosphere(altitude(y...))
+	_, rho, p, _, _, a := atmosphere.Atmosphere(Altitude(y...))
 
 	// thrust
 	if st.Powered {
@@ -75,7 +75,7 @@ func accel(r Rocket, aero map[string]*aero.Aero, fromRight bool, t float64, y ..
 	}
 
 	// aero
-	if rho >= 0 && altitude(y...) < Hatm {
+	if rho >= 0 && Altitude(y...) < Hatm {
 		theta := FlightAngle(y...)
 		V := VelMag(y...)
 		q := 0.5 * rho * V * V
