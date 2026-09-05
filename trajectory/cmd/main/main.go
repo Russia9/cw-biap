@@ -5,6 +5,7 @@ import (
 	"os"
 	"traj"
 	"traj/aero"
+	"traj/atmosphere"
 
 	na "github.com/Russia9/numerical-analysis"
 )
@@ -91,7 +92,7 @@ func main() {
 	}
 	defer out.Close()
 
-	out.WriteString("t,stage,m,x,y,Vx,Vy,V,r,h,pitch,flightAngle,attack\n")
+	out.WriteString("t,stage,m,x,y,Vx,Vy,V,r,h,q,Ma,pitch,flightAngle,attack\n")
 	for i := range res[0] {
 		t := res[0][i].X                   // Current time
 		stI := traj.StageIndex(r, true, t) // Stage index
@@ -103,22 +104,34 @@ func main() {
 			y[j] = res[j][i].Y
 		}
 
-		// pitch and attack
+		// pitch, attack, altitude
 		pitch := r.Pitch.Pitch(t)
 		attack := r.Pitch.Pitch(t) - traj.FlightAngle(y...)
 		if !st.Controlled {
 			pitch = traj.FlightAngle(y...)
 			attack = 0
 		}
+		h := traj.Altitude(y...)
 
-		fmt.Fprintf(out, "%.3f,%d,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e\n",
+		// dynamic pressure & Ma
+		V := traj.VelMag(y...)
+		q := 0.
+		Ma := 0.
+		if h <= traj.Hatm {
+			_, rho, _, _, _, a := atmosphere.Atmosphere(h)
+			q = 0.5 * rho * V * V
+			Ma = V / a
+		}
+
+		fmt.Fprintf(out, "%.3f,%d,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e\n",
 			t, stI,
 			traj.Mass(st, t, traj.StageT0(r, stI)),
 			res[traj.IX][i].Y, res[traj.IY][i].Y,
 			res[traj.IVx][i].Y, res[traj.IVy][i].Y,
-			traj.VelMag(y...),
+			V,
 			traj.RadiusVec(y...),
-			traj.Altitude(y...),
+			h,
+			q, Ma,
 			pitch,
 			traj.FlightAngle(y...),
 			attack,
