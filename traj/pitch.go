@@ -25,8 +25,10 @@ type PitchSegment struct {
 
 type pitchArc func(tStart, tEnd, thetaDegStart, thetaDegEnd, k, t float64) float64
 
+const PitchShapeCos = "cos"
+
 var pitchShapes = map[string]pitchArc{
-	"cos": func(tStart, tEnd, thetaDegStart, thetaDegEnd, k, t float64) float64 {
+	PitchShapeCos: func(tStart, tEnd, thetaDegStart, thetaDegEnd, k, t float64) float64 {
 		return (thetaDegStart+thetaDegEnd)/2 + (thetaDegStart-thetaDegEnd)/2*math.Cos(math.Pi*math.Pow((t-tStart)/(tEnd-tStart), k))
 	},
 }
@@ -45,10 +47,11 @@ func (p Pitch) segment(t float64) int {
 	return i
 }
 
+// Pitch returns the current programmed pitch in radians.
 func (p Pitch) Pitch(t float64) float64 {
 	is := p.segment(t)
 	if is == -1 {
-		return p.ThetaDegStart
+		return p.ThetaDegStart * d2r
 	}
 	s := p.Segments[is]
 
@@ -59,5 +62,5 @@ func (p Pitch) Pitch(t float64) float64 {
 		tStart = p.Segments[is-1].TEnd
 	}
 
-	return pitchShapes[s.Shape](tStart, s.TEnd, thetaDegStart, s.ThetaDeg, s.K, t)
+	return pitchShapes[s.Shape](tStart, s.TEnd, thetaDegStart, s.ThetaDeg, s.K, t) * d2r
 }

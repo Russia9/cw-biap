@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"traj"
 
 	"gonum.org/v1/plot"
@@ -33,7 +34,7 @@ func main() {
 	p.X.Min = 0
 	p.X.Max = 150
 	p.Y.Min = 0
-	p.Y.Max = 100
+	p.Y.Max = math.Pi
 
 	// Save the plot to a PNG file.
 	if err := p.Save(15*vg.Inch, 8*vg.Inch, "functions.png"); err != nil {

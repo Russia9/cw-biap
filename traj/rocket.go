@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 )
 
 type Rocket struct {
@@ -55,16 +54,20 @@ func LoadRocketJSON(path string) (Rocket, error) {
 		}
 	}
 
-	// Sort arcs by TEnd (asecnding)
-	slices.SortFunc(r.Pitch.Segments, func(a, b PitchSegment) int {
-		if a.TEnd > b.TEnd {
-			return 1
-		} else if a.TEnd == b.TEnd {
-			return 0
-		} else {
-			return -1
+	// Validate pitch program
+	seen := make(map[float64]struct{})
+	for i, segment := range r.Pitch.Segments {
+		if _, ok := seen[segment.TEnd]; ok {
+			return Rocket{}, fmt.Errorf("pitch: zero-arc segment")
 		}
-	})
+		if segment.K < 1 && segment.Shape == PitchShapeCos {
+			return Rocket{}, fmt.Errorf("pitch: discontinuity")
+		}
+		if i != 0 && segment.TEnd < r.Pitch.Segments[i-1].TEnd {
+			return Rocket{}, fmt.Errorf("pitch: wrong ordering")
+		}
+		seen[segment.TEnd] = struct{}{}
+	}
 
 	return r, nil
 }
