@@ -36,13 +36,14 @@ head.stl:     PART := head
 $(PARAMS): $(PARAM_DEPS)
 	$(UV) run python main.py --write-scad-params >/dev/null
 
-# $(SCAD) MUST stay first: the recipe passes $< to OpenSCAD as the input file.
-$(STLS): %.stl: $(SCAD) $(PARAMS)
+# rocket.scad hardcodes this branch's dimensions and no longer includes
+# $(PARAMS), so the STLs do not depend on main.py. `make params` still works.
+$(STLS): %.stl: $(SCAD)
 	$(OPENSCAD) -D 'PART="$(PART)"' -D 'SCALE=$(SCALE)' -o $@ $<
 
 # --autocenter --viewall frames the whole stack; without them OpenSCAD's default
 # camera lands mid-body and the render shows a featureless tube.
-png: $(SCAD) $(PARAMS)
+png: $(SCAD)
 	$(OPENSCAD) -D 'PART="all"' --autocenter --viewall --camera=0,0,0,68,0,20,0 \
 	    --imgsize=1400,500 -o rocket.png $(SCAD)
 
