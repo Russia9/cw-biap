@@ -1,18 +1,18 @@
 """Render the CFD coefficient sweep as Typst tables on stdout.
 
-`openfoam/results/averages.csv` holds one row per (part, Ma, alpha) case. This
+`openfoam/out/averages.csv` holds one row per (part, Ma, alpha) case. This
 script reshapes it into one table per (part, coefficient): angle of attack down
 the rows, Mach number across the columns, values to 3 decimals.
 
 Only the three coefficients the trajectory simulator reads are emitted — Cd, Cl
-and CmPitch (see `traj/aero.go`); Cs, CmRoll and CmYaw are symmetry residue of
+and CmPitch (see `trajectory/aero/aero.go`); Cs, CmRoll and CmYaw are symmetry residue of
 order 1e-5 and would print as zeros.
 
 The grid shape follows the data: each part carries its own Mach and alpha
 points, so the column and row counts are derived per part, not fixed.
 
-    uv run python aero_tables.py
-    uv run python aero_tables.py --part all --coeff Cd
+    uv run python report/aero_tables.py
+    uv run python report/aero_tables.py --part all --coeff Cd
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import pandas as pd
 import typst
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_CSV = HERE / "openfoam" / "results" / "averages.csv"
+DEFAULT_CSV = HERE.parent / "openfoam" / "out" / "averages.csv"
 
 # CSV part key -> the caption phrase naming it, in flight order (matching
 # `aeroParts` in traj/aero.go).

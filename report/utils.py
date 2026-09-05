@@ -1,10 +1,19 @@
 import re
 from functools import cache
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 G0 = 9.80665  # m/s²
+
+# Digitized chart/table data lives next to this module, so every default below
+# is anchored to the file rather than to the working directory: the report
+# scripts are run as `uv run python report/<script>.py` from the repo root.
+ASSETS = Path(__file__).resolve().parent / "assets"
+
+# Callers pass either the ASSETS-anchored Path defaults or a plain string.
+StrPath = str | Path
 
 # The loaders below are memoized on their path arguments: a single main.py run
 # would otherwise re-parse the same eight CSVs dozens of times inside the
@@ -22,7 +31,7 @@ def _norm_label(s: str) -> str:
 
 
 @cache
-def load_chart(path: str) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+def load_chart(path: StrPath) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """Load a multi-curve digitized chart CSV.
 
     Format: row 0 = curve labels (one per column-pair), row 1 = X/Y headers,
@@ -47,12 +56,12 @@ def load_chart(path: str) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     return curves
 
 
-def interp_chart(path: str, key: str, x: float) -> float:
+def interp_chart(path: StrPath, key: str, x: float) -> float:
     """1D interpolation at x within the named curve in a chart CSV."""
     return float(np.interp(x, *load_chart(path)[key]))
 
 
-def interp_chart_2d(path: str, x: float, y: float) -> float:
+def interp_chart_2d(path: StrPath, x: float, y: float) -> float:
     """Bilinear interpolation: x within each curve, then y across numeric curve labels."""
     curves = load_chart(path)
     keyed = sorted((float(k), k) for k in curves)
@@ -66,12 +75,12 @@ def _fuel_row(fuel, path):
     return pd.read_csv(path).set_index("fuel").loc[fuel].to_dict()
 
 
-def fuel_props(fuel, path="assets/fuels.csv"):
+def fuel_props(fuel, path=ASSETS / "fuels.csv"):
     """Return a dict of fuel properties from the CSV."""
     return dict(_fuel_row(fuel, path))
 
 
-def burn_rate(fuel, p_k, path="assets/fuels.csv"):
+def burn_rate(fuel, p_k, path=ASSETS / "fuels.csv"):
     """Return (u, rho*u) for a fuel at chamber pressure p_k.
 
     The CSV's `u-p_k` column stores a law of the form `a*p_k^(n)`,
@@ -87,7 +96,7 @@ def burn_rate(fuel, p_k, path="assets/fuels.csv"):
     return u, float(props["rho"]) * u / 1000  # rho [kg/m³] * u [mm/s] → kg/(m²·s)
 
 
-def alpha_dv(rho_u, l_z, path="assets/chart-4-26-alpha.csv"):
+def alpha_dv(rho_u, l_z, path=ASSETS / "chart-4-26-alpha.csv"):
     return interp_chart_2d(path, rho_u, l_z)
 
 
@@ -130,7 +139,7 @@ def specific_thrust_vacuum(P_ud_r, R, T, k, p_a, p_k):
     return P_ud_r + (R * T) / (G0**2 * P_ud_r) * (p_a / p_k) ** ((k - 1) / k)
 
 
-def l_coefficient(rho_u, p_idx, path="assets/chart-4-27-l.csv"):
+def l_coefficient(rho_u, p_idx, path=ASSETS / "chart-4-27-l.csv"):
     """Return lambda_p for a given rho*u value by interpolating chart 4-27.
 
     p_idx: 1, 2, or 3 — selects the lambda_p curve.
@@ -139,21 +148,21 @@ def l_coefficient(rho_u, p_idx, path="assets/chart-4-27-l.csv"):
 
 
 @cache
-def k0_from_k(k, path="assets/table-k-k0.csv"):
+def k0_from_k(k, path=ASSETS / "table-k-k0.csv"):
     """Return K0 by linear interpolation from table 3.10."""
     df = pd.read_csv(path)
     return float(np.interp(k, df["k"].to_numpy(), df["K0"].to_numpy()))
 
 
 @cache
-def load_materials(path="assets/materials.csv"):
+def load_materials(path=ASSETS / "materials.csv"):
     """Return {id: value} of material properties from the materials table CSV."""
     df = pd.read_csv(path)
     return dict(zip(df["id"], df["value"].astype(float)))
 
 
 @cache
-def load_trajectory(path="assets/table-2.1.csv"):
+def load_trajectory(path=ASSETS / "table-2.1.csv"):
     """Return the burnout-trajectory reference table (2.1) as a DataFrame.
 
     Columns: L (km), h_k (km), l_k (km), theta_k (deg), V_k (m/s),

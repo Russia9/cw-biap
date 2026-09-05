@@ -31,7 +31,6 @@ import math
 import os
 import shutil
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
@@ -39,13 +38,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent  # openfoam/
 ROOT = HERE.parent  # repo root (has the Makefile)
 TEMPLATES = HERE / "templates"
+INPUT = HERE / "input"  # geometry in: `make openfoam-input` stages it here
+OUT = HERE / "out"  # everything this module generates
 
-PART_STL = {  # Makefile target per part
-    "all": "rocket.stl",
-    "stage2up": "stage2up.stl",
-    "stage3up": "stage3up.stl",
-    "head": "head.stl",
-}
+PARTS = ("all", "stage2up", "stage3up", "head")
 SOLVER = {"subsonic": "rhoSimpleFoam", "supersonic": "hisa"}
 
 # --- gas model (must match thermophysicalProperties) -----------------------
@@ -105,14 +101,15 @@ def stl_bbox(path: Path) -> tuple[float, float]:
     return max(xs) - min(xs), rad
 
 
-def ensure_stl(part: str, skip: bool) -> Path:
-    """Build (unless --no-stl) and return the path to the part STL."""
-    target = PART_STL[part]
-    path = ROOT / target
-    if not skip:
-        subprocess.run(["make", target, "SCALE=1"], cwd=ROOT, check=True)
+def part_stl(part: str) -> Path:
+    """Return the path to a part STL in openfoam/input/.
+
+    This module never builds geometry: openscad/ owns it, and `make
+    openfoam-input` stages the meshes here. Keeping the CFD chain read-only on
+    its input is what makes a sweep reproducible from a fixed mold line."""
+    path = INPUT / f"{part}.stl"
     if not path.is_file():
-        sys.exit(f"error: {path} not found (run without --no-stl to build it)")
+        sys.exit(f"error: {path} not found (run `make openfoam-input` to stage it)")
     return path
 
 
@@ -168,7 +165,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--part", choices=PART_STL, required=True)
+    ap.add_argument("--part", choices=PARTS, required=True)
     ap.add_argument("--regime", choices=SOLVER, required=True)
     ap.add_argument("--Ma", type=float, required=True, help="freestream Mach number")
     ap.add_argument("--alpha", type=float, default=0.0, help="angle of attack [deg]")
@@ -191,22 +188,21 @@ def main() -> None:
         "--out",
         type=Path,
         default=None,
-        help="output case dir (default openfoam/<part>/<regime>)",
+        help="output case dir (default openfoam/out/<part>/<regime>)",
     )
-    ap.add_argument("--no-stl", action="store_true", help="reuse existing STLs")
     args = ap.parse_args()
     if args.layers is not None and args.layers < 1:
         sys.exit("error: --layers must be >= 1")
     if args.expansion < 1.0:
         sys.exit("error: --expansion must be >= 1")
 
-    out = args.out or (HERE / args.part / args.regime)
+    out = args.out or (OUT / args.part / args.regime)
     solver = SOLVER[args.regime]
 
     # 1. geometry from STL bounding boxes -----------------------------------
-    part_stl = ensure_stl(args.part, args.no_stl)
-    all_stl = part_stl if args.part == "all" else ensure_stl("all", args.no_stl)
-    L, R = stl_bbox(part_stl)  # this part: drives the mesh
+    stl = part_stl(args.part)
+    all_stl = stl if args.part == "all" else part_stl("all")
+    L, R = stl_bbox(stl)  # this part: drives the mesh
     L_all, R_all = stl_bbox(all_stl)  # part="all": fixed coefficient reference
 
     # 2. freestream state ----------------------------------------------------
@@ -320,7 +316,7 @@ def main() -> None:
     )
 
     # the surface itself
-    copy(part_stl, out / "constant/triSurface/model.stl")
+    copy(stl, out / "constant/triSurface/model.stl")
 
     # --- summary -----------------------------------------------------------
     print(f"\nGenerated {args.regime} case ({solver}) -> {out}")

@@ -14,7 +14,7 @@ columns under a '#'-comment label line), and writes one tidy CSV per case:
 
     uv run python openfoam/convergence.py
     uv run python openfoam/convergence.py --only-part all
-    uv run python openfoam/convergence.py --base openfoam --out openfoam/results
+    uv run python openfoam/convergence.py --base openfoam/out --out openfoam/out
 
 Disk-driven: it parses whatever produced output. A case with no/empty
 forceCoeffs output is warned and skipped, never fatal.
@@ -35,6 +35,7 @@ from pathlib import Path
 import manifest
 
 HERE = Path(__file__).resolve().parent  # openfoam/
+OUT = HERE / "out"  # everything this module generates
 PARTS = ["all", "stage2up", "stage3up", "head"]  # mirrors sweep.py
 REGIMES = {"subsonic", "supersonic"}
 
@@ -130,8 +131,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--base", type=Path, default=HERE, help="root holding the case dirs (default openfoam/)")
-    ap.add_argument("--out", type=Path, default=HERE / "results", help="output dir for CSVs (default openfoam/results/)")
+    ap.add_argument("--base", type=Path, default=OUT, help="root holding the case dirs (default openfoam/out/)")
+    ap.add_argument("--out", type=Path, default=OUT, help="output dir for CSVs (default openfoam/out/)")
     ap.add_argument("--only-part", action="append", choices=PARTS, help="restrict to part(s); repeatable")
     ap.add_argument("--glob", default="*/*/Ma*_a*/postProcessing/forceCoeffs", help="case discovery pattern under --base")
     ap.add_argument("--state", type=Path, default=None, help=f"sweep manifest (default {manifest.DEFAULT_STATE})")

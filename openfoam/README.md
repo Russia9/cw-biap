@@ -13,7 +13,12 @@ openfoam/
     common/              shared: thermo, turbulence, mesh dicts, run scripts
     subsonic/            rhoSimpleFoam stack (0/ BCs, schemes, solution)
     supersonic/          hisa stack (0/ BCs, schemes, solution)
-  <part>/<regime>/       generated cases (e.g. all/supersonic)
+  input/                 staged geometry (gitignored) -- `make openfoam-input`
+  out/                   EVERYTHING generated (gitignored):
+    <part>/<regime>/       cases (e.g. out/all/supersonic)
+    *.csv                  per-case convergence + averages.csv
+    plots/                 per-case coefficient PNGs
+    sweep_state.json  sweep_results.csv  sweep.log
   hisa_example/          upstream HiSA reference (read-only; do not run)
   mesh_example/          upstream mesh reference (read-only)
 ```
@@ -32,9 +37,15 @@ Options: `--part {all,stage2up,stage3up,head}`, `--regime {subsonic,supersonic}`
 `--Ma`, `--alpha` (deg), `--p`/`--T` (default sea-level ISA 101325 Pa / 288.15 K),
 `--yplus` (default 325), `--layers` (override auto layer count; auto gives
 Ma 4 about 12 and never below 6),
-`--expansion` (1.2), `--np` (12), `--out`, `--no-stl` (reuse existing STLs).
+`--expansion` (1.2), `--np` (12), `--out`.
 
-The generator builds the part STL (`make <part>.stl`), reads its bounding box,
+This module never builds geometry. `openscad/` owns the mold line and
+`make openfoam-input` copies the four meshes into `openfoam/input/`; the
+generator exits with an error if the part it needs is not there. Keeping the CFD
+chain read-only on its input is what stops a sweep from silently re-rendering
+against a changed `rocket-params.scad` halfway through.
+
+The generator reads the part STL's bounding box,
 and **adapts the mesh to the geometry** — domain (`-5L … 11L`, farfield `5L`),
 refinement cylinders and the boundary layer all scale with the part, so the cell
 count stays ~constant across parts. `subsonic → rhoSimpleFoam`,
@@ -54,7 +65,7 @@ count stays ~constant across parts. `subsonic → rhoSimpleFoam`,
 ## Meshing and running (in the OpenFOAM environment)
 
 ```bash
-cd openfoam/all/supersonic
+cd openfoam/out/all/supersonic
 ./Allrun.pre      # blockMesh, surfaceFeatureExtract, parallel snappyHexMesh,
                   #   reconstruct to serial, checkMesh
 ./Allrun          # decomposePar -> mpirun -np <np> <solver> -parallel -> reconstructPar
@@ -84,7 +95,7 @@ representative Mach.
 order, picking the regime per Mach (`Ma < 1 → subsonic`, else supersonic):
 
 ```bash
-uv run python openfoam/sweep.py --dry-run    # print the 81-case ordered queue, no run
+uv run python openfoam/sweep.py --dry-run    # print the 96-case ordered queue, no run
 uv run python openfoam/sweep.py              # full run (OpenFOAM env must be sourced)
 uv run python openfoam/sweep.py --retry-failed
 ```
@@ -110,11 +121,11 @@ STLs buildable) fails fast before committing hours. Useful flags: `--np`,
 actually converged (Cd/Cl/Cm flattened out, not still drifting), `convergence.py`
 reads the per-iteration history OpenFOAM writes to
 `<case>/postProcessing/forceCoeffs/<time>/coefficient.dat` and emits one tidy CSV
-per case into `results/` — `Time` plus every coefficient column, one row per
+per case into `out/` — `Time` plus every coefficient column, one row per
 iteration, ready to plot:
 
 ```bash
-uv run python openfoam/convergence.py                 # all cases -> openfoam/results/*.csv
+uv run python openfoam/convergence.py                 # all cases -> openfoam/out/*.csv
 uv run python openfoam/convergence.py --only-part all
 ```
 
@@ -123,21 +134,21 @@ restart time-dirs into one monotonic history, and warns-and-skips empty cases.
 
 ## Plots & averages
 
-`plot_coeffs.py` consumes those `results/*.csv` and, per case, writes one PNG with
+`plot_coeffs.py` consumes those `out/*.csv` and, per case, writes one PNG with
 two stacked panels (`Cd/Cl/Cs` on top, `CmPitch/CmRoll/CmYaw` below) vs iteration,
-with the averaging window shaded. It also writes one `results/averages.csv` row per
+with the averaging window shaded. It also writes one `out/averages.csv` row per
 case — `part, regime, Ma, alpha, n_iters` plus the **mean and std** of each of the
 six coefficients over the last `--window` iterations:
 
 ```bash
-uv run python openfoam/plot_coeffs.py              # PNGs -> results/plots/, averages.csv
+uv run python openfoam/plot_coeffs.py              # PNGs -> out/plots/, averages.csv
 uv run python openfoam/plot_coeffs.py --window 25  # average over the last 25 iterations
 ```
 
 Re-runnable as cases arrive: it rebuilds the plots and `averages.csv` from whatever
 result CSVs currently exist, and warns-and-skips short/unreadable ones.
 
-> **Do not run this without a complete sweep.** `results/averages.csv` is the only
+> **Do not run this without a complete sweep.** `out/averages.csv` is the only
 > surviving CFD result in the repository — the 81 per-case CSVs were never
 > committed — and it is the sole input to the trajectory simulator's `-aero`
 > flag. Rebuilding it from a partial set of result CSVs silently truncates the

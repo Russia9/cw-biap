@@ -1,76 +1,103 @@
 # cw-biap
 
 Coursework for BIAP: ballistic and thrust design of a three-stage solid-fuel
-rocket, plus a trajectory simulator used to check the design against the
-constructive-ballistic limits of §4.4.
+rocket, plus a trajectory simulator used to check the design.
 
-The repository has two layers.
+The repository is five modules, each owning one artifact and writing only into
+its own directory. Data flows one way:
 
-## 1. Report calculations (Python)
-
-Sizing calculations that emit [Typst](https://typst.app) math blocks and table
-rows on stdout, to be pasted into the report document.
-
-```bash
-uv run python preliminary.py   # burn-rate and l_з/α_дв fuel-selection tables
-uv run python main.py          # thrust, weights, masses and geometry
+```
+report/ ──> openscad/ ──> openfoam/ ──> trajectory/
+   │                          │              ▲
+   └────> optimizer/input/ ───┴──────────────┘
 ```
 
-`main.py` also owns the physical inputs of the trajectory simulator. A bare run
-warns on stderr if `traj/rocket.json` has drifted out of sync; to update it:
+| module        | owns                                        | generated (gitignored)     |
+|---------------|---------------------------------------------|----------------------------|
+| `report/`     | sizing calculations, Typst output, `archive.typ` | –                     |
+| `openscad/`   | the outer mold line                         | `out/` (STLs, renders)     |
+| `openfoam/`   | the CFD sweep                               | `input/`, `out/`           |
+| `optimizer/`  | the pitch program (stub)                    | `input/`, `out/`           |
+| `trajectory/` | the Go simulator                            | `out/` (plots)             |
+
+## 1. `report/` — sizing calculations (Python)
+
+Emit [Typst](https://typst.app) math blocks and table rows on stdout, to be
+pasted into the report document. `archive.typ` is the in-repo snapshot of it.
 
 ```bash
-uv run python main.py --write-traj-config
+uv run python report/preliminary.py   # burn-rate and l_з/α_дв fuel-selection tables
+uv run python report/main.py          # thrust, weights, masses and geometry
+uv run python report/aero_tables.py   # CFD coefficients as α × Mach tables
 ```
 
-That rewrites only the masses, burn times, specific impulses and motor
-diameters. The pitch program and limits in that file belong to the optimizer and
-are preserved. `main.py --write-scad-params` does the same for the CAD geometry
-in `rocket-params.scad`.
-
-## 2. Trajectory simulator (Go) and optimizer (Python)
-
-A planar, spherical-Earth RK4 integrator with a GOST 4401-81 atmosphere and a
-programmed pitch angle, plus a CMA-ES driver that tunes the pitch program.
+`main.py` also owns the physical inputs of the other modules. A bare run warns
+on stderr if either generated file has drifted; to update them:
 
 ```bash
-cd traj
-go run ./main -config=rocket.json          # simulate, write out/traj.csv + diagnostics
-go run ./main -config=rocket.json -metrics # one JSON line, for the optimizer
-uv run python optimize.py                  # tune the pitch program -> out/best.json
-uv run python plot_trajectory.py           # charts from out/traj.csv
+uv run python report/main.py --write-traj-config   # -> optimizer/input/rocket.json
+uv run python report/main.py --write-scad-params   # -> openscad/rocket-params.scad
 ```
 
-### Aerodynamics must be passed explicitly
+`--write-traj-config` writes only the `stages` array. The pitch program is
+optimizer **output**, not a sizing input, so it is never written here — an
+existing `pitch` block is preserved verbatim.
 
-The coefficient table lives in `openfoam/results/averages.csv` and is **not**
-loaded by default. Without `-aero` the simulator runs with no drag, lift or
-pitch moment, which does not reproduce the reported result — the pitch program
-was optimized with the table, and a drag-free run violates the §4.4 angle-of-attack
-limits. Always pass it:
+## 2. `openscad/` — geometry
+
+`rocket.scad` is the outer mold line: the surface the flow sees, with no motor
+internals and no nozzles. Its dimensions come from `rocket-params.scad`, which
+`report/main.py` generates, so the drawing cannot drift from the report.
 
 ```bash
-go run ./main -config=rocket.json -aero=../openfoam/results/averages.csv
-uv run python optimize.py --aero ../openfoam/results/averages.csv
+make stls              # -> openscad/out/{all,stage2up,stage3up,head}.stl
+make png               # -> openscad/out/rocket.png
+make openfoam-input    # stage the meshes into openfoam/input/
 ```
 
-## 3. Geometry (OpenSCAD) and CFD (OpenFOAM)
+## 3. `openfoam/` — CFD
 
-`rocket.scad` is the outer mold line — the surface the flow sees, with no motor
-internals or nozzles. Its dimensions come from `rocket-params.scad`, which
-`main.py` generates, so the drawing cannot drift from the report.
+Turns the staged STLs into meshable OpenFOAM cases and sweeps them over Mach and
+angle of attack. **It never builds geometry** — `make openfoam-input` puts it in
+`openfoam/input/`, and everything generated lands in `openfoam/out/`.
 
-```bash
-make stls        # rocket.stl, stage2up.stl, stage3up.stl, head.stl
-make png         # preview render
-```
-
-`openfoam/` turns those STLs into meshable OpenFOAM cases and sweeps them over
-Mach and angle of attack. Case generation needs only `make` and `openscad`;
-meshing and solving need OpenFOAM v2512 with the HiSA module. See
-`openfoam/README.md`.
+Case generation needs only `make` and `openscad`; meshing and solving need
+OpenFOAM v2512 with the HiSA module. See `openfoam/README.md`.
 
 ```bash
 uv run python openfoam/gen_case.py --part all --regime supersonic --Ma 4 --alpha 0
 uv run python openfoam/sweep.py --dry-run
+```
+
+The aggregated coefficient table is `openfoam/out/averages.csv`. It is
+gitignored like the rest of `out/`, so a fresh clone must re-run the sweep (or
+be handed the file) before the simulator can fly with aerodynamics.
+
+## 4. `trajectory/` — the simulator (Go)
+
+A planar, spherical-Earth RK4 integrator with a GOST 4401-81 atmosphere and a
+programmed pitch angle. Both binaries take their paths as positional arguments
+and create `out/` themselves.
+
+```bash
+cd trajectory
+go build ./... && go test ./...
+go run ./cmd/main ../optimizer/input/rocket.json ../openfoam/out/averages.csv
+go run ./cmd/plot ../optimizer/input/rocket.json    # the pitch program alone
+```
+
+The coefficient table is **required**, not optional: there is no drag-free mode.
+
+## 5. `optimizer/` — pitch search
+
+A stub. It will read `optimizer/input/rocket.json` (written by `report/main.py`)
+and write the tuned pitch program to `optimizer/out/`.
+
+## Environment
+
+Python 3.11 via [`uv`](https://docs.astral.sh/uv/); Go 1.27 for the simulator.
+
+```bash
+uv run ruff check .   # lint
+uv run pyright        # type-check report/
 ```

@@ -4,127 +4,215 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-Coursework for BIAP (ballistic/thrust design of a solid-fuel three-stage rocket). Four artifacts in dependency order:
+Coursework for BIAP (ballistic/thrust design of a solid-fuel three-stage rocket).
 
-1. Python sizing scripts print Typst math blocks and table rows on **stdout** — nothing is written to a document.
-2. Those snippets are pasted into the report by hand; `archive.typ` is the in-repo snapshot of it.
-3. `rocket.scad` turns the same dimensions into STLs, which `openfoam/` meshes and sweeps into the aerodynamic coefficient table.
-4. The Go simulator under `traj/` flies the resulting design against that table and checks it against the §4.4 constructive-ballistic limits.
+**Five modules, each writing only into its own directory.** Data flows one way:
 
-Design point at HEAD: m₀ = 29 724 kg, full range 12 749 km, burnout V = 7388 m/s, H = 169.8 km, θ = 17.5°.
-The pitch program is a genuine open-loop ϑ_пр(t): 24 C¹ Hermite arcs, all three
-stages `"steering": "theta"`, so α is an output of the trajectory rather than a
-commanded quantity. See the 2026-09 note in `main.py`'s K_V block for why the
-earlier α-framed parameterisation was needed and what replaced it.
+```
+report/ ──> openscad/ ──> openfoam/ ──> trajectory/
+   │                          │              ▲
+   └────> optimizer/input/ ───┴──────────────┘
+```
+
+1. `report/` — Python sizing scripts print Typst math blocks and table rows on
+   **stdout**; nothing is written to a document. Pasted into the report by hand;
+   `report/archive.typ` is the in-repo snapshot of it.
+2. `openscad/` — `rocket.scad` turns the same dimensions into STLs.
+3. `openfoam/` — meshes and sweeps them into the aerodynamic coefficient table.
+4. `trajectory/` — the Go simulator flies the design against that table.
+5. `optimizer/` — a stub that will search the pitch program.
+
+Every generated artifact is gitignored by its own module's `.gitignore`
+(`openscad/out/`, `openfoam/input/` + `out/`, `optimizer/input/` + `out/`,
+`trajectory/out/`); the root `.gitignore` carries only repo-wide rules.
+**A fresh clone therefore has no STLs, no CFD table and no simulator config** —
+run `make stls && make openfoam-input`, `report/main.py --write-traj-config`, and
+either re-run the sweep or obtain `openfoam/out/averages.csv` out of band.
+
+Design point at HEAD (`uv run python report/main.py`): m₀₁ = 29 708 kg, stage masses
+29 708 / 8 546 / 2 419 kg, burn times 66.2 / 40.9 / 35.1 s, motor diameters
+1.57 / 1.25 / 1.09 m, stage lengths 7.14 / 3.51 / 1.75 m. The prototype launch
+mass the assignment fixes is 29 724 kg; `K_V = 1.187` is the knob tuned to hit it.
+
+**The trajectory layer is mid-rewrite.** The earlier simulator (per-stage
+Hermite pitch arcs, §4.4 diagnostics, CSV rows, `-metrics`, a CMA-ES driver) was
+replaced at `90701cf` by a smaller integrator, and `optimizer/` is a stub. Range,
+apogee and §4.4 numbers quoted in `main.py`'s comments and in `archive.typ` come
+from the **old** simulator and cannot currently be reproduced — see
+[Trajectory layer](#trajectory-layer-trajectory) and [Known drift](#known-drift).
 
 ## Running scripts
 
+Every path below is anchored to the script file, so these work from anywhere;
+the repo root is the conventional place to stand.
+
 ```bash
-uv run python main.py        # thrust/weights/geometry → Typst math blocks + tables
-uv run python preliminary.py # burn-rate and l_z/alpha_dv preliminary tables
-uv run python main.py --write-traj-config  # resync traj/rocket.json with main.py
-uv run python aero_tables.py  # CFD coefficients → Typst tables (α rows × M columns)
-uv run pyright               # type-check all Python (standard mode)
+uv run python report/main.py        # thrust/weights/geometry → Typst math blocks + tables
+uv run python report/preliminary.py # burn-rate and l_z/alpha_dv preliminary tables
+uv run python report/aero_tables.py # CFD coefficients → Typst tables (α rows × M columns)
+uv run python report/main.py --write-scad-params  # → openscad/rocket-params.scad
+uv run python report/main.py --write-traj-config  # → optimizer/input/rocket.json
+uv run pyright               # type-checks report/ — clean
+uv run ruff check .          # clean
 
-cd traj
-go build ./... && go test ./...              # build and test the simulator
-go test -run TestCosinePitchSegmentsChainContinuously ./...  # single test
-go run ./main -config=rocket.json -aero=../openfoam/results/averages.csv  # → out/traj.csv + §4.4 diagnostics
-go run ./main -config=rocket.json -aero=... -metrics   # one JSON line, what the optimizer reads
-uv run python optimize.py --aero ../openfoam/results/averages.csv  # CMA-ES pitch → out/best.json
-uv run python plot_trajectory.py [out/traj.csv]        # charts from a trajectory CSV
-
-cd ..                                        # repo root
-make stls                                    # rocket.scad -> the four CFD STLs
-make png                                     # preview render
-uv run python main.py --write-scad-params    # regenerate rocket-params.scad
+make stls                    # → openscad/out/{all,stage2up,stage3up,head}.stl
+make png                     # → openscad/out/rocket.png
+make openfoam-input          # stage those meshes into openfoam/input/
 uv run python openfoam/gen_case.py --part all --regime supersonic --Ma 4 --alpha 0
-uv run python openfoam/sweep.py --dry-run    # print the 81-case queue, run nothing
+uv run python openfoam/sweep.py --dry-run    # print the 96-case queue, run nothing
+
+cd trajectory
+go build ./... && go test ./...                      # build and test
+go test -run TestGOSTAtmosphere ./atmosphere/        # a single test
+go run ./cmd/main ../optimizer/input/rocket.json ../openfoam/out/averages.csv
+go run ./cmd/plot ../optimizer/input/rocket.json     # → out/pitch.png
 ```
 
-`uv run ruff check .` is clean on the live code; the only violations are in the archived `preliminary-29700/scripts/`.
+Both Go binaries take their config path as a positional argument and create
+`trajectory/out/` themselves.
 
 ## Architecture
 
-Four layers on the Python side:
+Four layers inside `report/`:
 
-1. **`assets/*.csv`** — raw data tables digitized from textbook charts:
+1. **`report/assets/*.csv`** — raw data tables digitized from textbook charts:
    - `fuels.csv` — fuel properties (ρ, R, k, T, P_ud, burn-rate law, Al%)
    - `materials.csv` (`load_materials`), `table-2.1.csv` (`load_trajectory`, burnout-trajectory reference)
    - `chart-4-26-alpha.csv`, `chart-4-27-l.csv` — digitized nomogram curves for bilinear interpolation
    - `chart-3-5-*.csv`, `chart-3-6-*.csv`, `table-k-k0.csv` — additional reference tables
 
-2. **`utils.py`** — pure physics functions + CSV-backed interpolation. All functions are stateless; they accept SI/practical units and return floats. Chart lookups use `np.interp` with bilinear interpolation across curves.
+2. **`report/utils.py`** — pure physics functions + CSV-backed interpolation. All functions are stateless; they accept SI/practical units and return floats. Chart lookups use `np.interp` with bilinear interpolation across curves. Every
+   default is anchored to `ASSETS = Path(__file__).parent / "assets"`, so the
+   scripts do not depend on the working directory.
 
-3. **`typst.py`** — pure presentation/rendering layer, kept separate from physics: `emit()` (wrap a math body), `fmt()`, `section()`, `stage_header()`, `param_row()`/`param_rows()`/`param_table()` (emit Typst `table(...)` rows with a `[Параметр]` column plus per-stage columns).
+3. **`report/typst.py`** — pure presentation/rendering layer, kept separate from physics: `emit()` (wrap a math body), `fmt()`, `section()`, `stage_header()`, `param_row()`/`param_rows()`/`param_table()`/`coeff_table()`.
 
-4. **`main.py` / `preliminary.py`** — calculation scripts. Each defines a `STAGES` list / constants at the top and a `main()` that prints Typst snippets. In `main.py`, keep the split: `calc_*` functions are pure (return `Thrust`/`Weight`/`Subrockets` NamedTuples), and `emit_*` functions do the printing — don't mix computation into the emit functions.
+4. **`report/main.py` / `preliminary.py` / `aero_tables.py`** — calculation scripts. Each defines a `STAGES` list / constants at the top and a `main()` that prints Typst snippets. In `main.py`, keep the split: `calc_*` functions are pure (return `Thrust`/`Weight`/`Subrockets` NamedTuples), and `emit_*` functions do the printing — don't mix computation into the emit functions.
 
-`main.py`'s module-level constants are the design knobs, and each one carries a comment recording why it holds its value (see the `K_V = 1.198` block on the loss-factor band, and the `STAGES` block on λ_з). Preserve that reasoning when changing a value.
+`main.py`'s module-level constants are the design knobs, and each one carries a comment recording why it holds its value (see the `K_V = 1.187` block on the loss-factor band, and the `STAGES` block on the l̄_з/ρ_т·u pair that buys the nozzle fit). Preserve that reasoning when changing a value.
 
-## The report (`archive.typ`)
+## The report (`report/archive.typ`)
 
-`archive.typ` is a tracked snapshot of the Typst report with the script output already pasted in. Two things to know:
+`report/archive.typ` is a tracked snapshot of the Typst report with the script output already pasted in. Three things to know:
 
 - **It does not compile standalone**: it references `minuteman-1.png`, which is not in the repo, and expects fonts that may not be installed.
-- **It lags `main.py`**: e.g. its motor-geometry table still carries d_з1 = 1.535 m and L_1 = 7.65 m against the current 1.545 m / 7.71 m. After changing a calculation, re-paste the affected block. `section()` prints a `// ===== <title> =====` marker at each section boundary in stdout to make the blocks easy to cut; those markers are not present in `archive.typ`.
+- **It lags `main.py` in places.** 111 of the 129 `#math.equation` blocks `main.py` prints appear in it verbatim; the 18 that don't are the nozzle/length block — it still carries L = 7.70 / 3.95 / 2.18 m against the current 7.14 / 3.51 / 1.75, and δ_с1 = 6° against 8°. To find drift, diff the emitted blocks against the file:
 
-## Trajectory layer (`traj/`)
+  ```bash
+  # prints every emitted block that is not in archive.typ verbatim (18 today)
+  cd report && uv run python main.py 2>/dev/null \
+    | grep '^#math.equation' | grep -vxFf archive.typ
+  ```
 
-Go package `traj` — planar spherical-Earth RK4 (`sim.go` integration driver, `model.go` equations of motion, `pitch.go` programmed pitch, `aero.go` coefficient tables, `constants.go`/`rocket.go` constants and config types, `configfile.go` JSON parsing, `row.go` trajectory rows, `diagnostics.go` §4.4 measurement, `output.go` CSV/metrics/diagnostics printing), GOST 4401-81 atmosphere in `atmosphere/`, CLI in `main/`, plus `optimize.py` (CMA-ES) and `plot_trajectory.py`. Simulator behavior is pinned by golden tests (`sim_test.go`, `atmosphere_test.go`): a refactor must keep them byte-exact, and a deliberate physics change updates the pins in the same commit with the delta recorded.
+- `section()` prints a `// ===== <title> =====` marker at each section boundary in stdout to make the blocks easy to cut; those markers are not present in `archive.typ`.
 
-The model is 3-DOF with a **programmed** pitch angle: `AeroForces` returns a pitch moment `Mz`, but `activeAccel` discards it — `Mz` only reaches the CSV and diagnostics. Consequently `Lref` in `constants.go` scales nothing that affects the trajectory.
+## Trajectory layer (`trajectory/`)
 
-### `main.py` owns the physical fields of `rocket.json`
+Go module **`traj`** (the import paths are `traj`, `traj/aero`, `traj/atmosphere` — the module name did not follow the `traj` → `trajectory` directory rename in `7dc0abd`). Go 1.27.
 
-`payload_mass` and each stage's `m0`, `m_fuel`, `burn_time`, `isp_sl`, `isp_vac`, `dm` come from `main.py`. Never hand-edit those; change `main.py` and run `--write-traj-config`. A bare `main.py` run warns on stderr when they drift. The `t_vertical`, `pitch` and `limits` fields are optimizer output and are preserved by the writer.
+- `model.go` — equations of motion and `InitModel`, which returns a `na.FuncSystem` of four derivatives over the state `[Vx, Vy, x, y]`.
+- `pitch.go` — the programmed pitch ϑ(t): a flat list of arcs, each moving ϑ from the previous arc's `theta_deg` to its own by `t_end`. Only one shape is implemented, `"cos"`, with exponent `k`.
+- `rocket.go` — config types and `LoadRocketJSON`, which also validates the program (no zero-length arcs, ordered `t_end`, `k >= 1` so joints are not discontinuous, and no powered-but-uncontrolled stage).
+- `constants.go` — Earth/atmosphere constants and the aerodynamic reference.
+- `aero/aero.go` — loads `averages.csv` into bilinear interpolants per part, mirroring each row to −α (Cd even, Cl and CmPitch odd).
+- `atmosphere/` — GOST 4401-81, valid to `HBoundary` = 94 km, vacuum above.
+- `cmd/main` — integrate and plot the trajectory; `cmd/plot` — plot the pitch program alone.
 
-### Aerodynamics must be passed explicitly
+RK4, bilinear interpolation and the `Point3D`/`FuncSystem` types come from the
+external `github.com/Russia9/numerical-analysis`; plotting from `gonum.org/v1/plot`.
 
-The CFD table is `openfoam/results/averages.csv` (part keys `all`, `stage2up`, `stage3up`, `head`, with fallbacks in `aero.go`), and it must be passed: `-aero=<averages.csv>` for the simulator, `--aero=<averages.csv>` for `optimize.py`. Without the flag `traj.ZeroAero()` supplies an empty table, so drag, lift and pitch moment are all zero — the force path in `model.go` is unchanged, it just multiplies by zero.
+### What the model does and does not do
 
-The pitch program in `rocket.json` was optimized *with* the table, so a drag-free run does not reproduce the reported result: the same config reports 13 010 km instead of 12 749 km and **violates two §4.4 limits** (max |α| 1.83° vs 1.50° subsonic, 17.07° vs 10.00° supersonic). Lift is what turns the vehicle inside those |α| limits, so removing the table is not a conservative simplification — and now that the program is ϑ-framed, α is an output, so a drag-free run changes it directly.
+3-DOF, planar, spherical Earth, no rotation. Thrust is applied along the
+programmed pitch, drag along −V and lift normal to it. `Aref` scales both.
 
-### The design sits on the §4.4 boundary
+- **`Lref` is dead code**: declared, never read (there is no pitch moment in the
+  model). `RrefAll = 0.785` *is* load-bearing — it scales every aerodynamic
+  force. Both are the `all.stl` bounding box; refresh after any change to
+  `report/main.py`'s d_(м i)/L_i or to `openscad/rocket.scad`:
 
-The pitch program was optimized flat against the constraints, so there is no robustness margin except on q (76 kPa of 120 kPa). Any change to masses, impulses, the aero table or the reference area makes it infeasible rather than merely suboptimal. Re-run `optimize.py` and check the diagnostics before reporting a result.
+  ```bash
+  make stls && uv run python -c "import sys; sys.path.insert(0,'openfoam');
+  from pathlib import Path; from gen_case import stl_bbox
+  print(stl_bbox(Path('openscad/out/all.stl')))"   # -> (16.393, 0.785)
+  ```
 
-**Every §4.4 check currently reads OK** at 12 749 km, but four of them sit within 0.2 % of their limit: |α| subsonic 1.4985/1.50, |α| supersonic 9.9887/10.00, and both pitch rates 2.9968/3.00. Only q (34 % margin) and the apogee (6 %) have real room. The |α| limits are now *derived* rather than commanded — the program steers ϑ — which makes them the sharpest test that a change has not broken anything. Two further constraints bind:
+- **`CmPitch` is loaded, interpolated, and never consumed.** There is no pitch
+  moment in `accel()` and no rotational DOF.
+- **α is derived, not integrated**: `alphaDeg = ϑ_пр(t) − θ(t)` for a controlled
+  stage, and is forced to zero for an uncontrolled one. Nothing bounds it.
+- **The 4th "stage"** is the payload coast: `powered: false`,
+  `controlled: false`, `burn_time: 3000` as a carry-on horizon. `stage()`
+  carries the last stage past its burn time regardless.
+- **The aero table is a required positional argument**, not an optional flag —
+  `go run ./cmd/main <rocket.json> <averages.csv>`. There is no drag-free mode.
+- Integration stops at H = 0 (`h < 0` requests a half-step), fixed h = 0.1 s.
+- **Past the last pitch arc the final angle is HELD.** Evaluating the arc beyond
+  its own `t_end` would put the normalised time above 1, and `cos(pi*x^k)` then
+  swings the vehicle for the whole coast. A config with no `pitch` block is
+  rejected by `LoadRocketJSON` rather than flown at ϑ = 0.
 
-- **|α| ≤ 1.5° at any separation inside the atmosphere** (`eps_sep`), gated on q > `QSepMin` = 1 kPa rather than on altitude — separation loads are a dynamic-pressure phenomenon, and an H ≤ 94 km gate would sit within metres of the 2/3 separation and flip on sub-second timing changes. In practice only the 1/2 separation qualifies (q ≈ 15 kPa); the 2/3 one is exempt at q ≈ 0. Measured at 1.4973/1.50.
-- **§4.1's 94 km ascending crossing must fall in the stage-2 burn.** Penalised on `CrossUpMargin` (seconds inside that window, negative outside) rather than on the stage number, which is a step with no gradient to follow. The optimum converges onto `CROSS_MARGIN_S` = 0.5 s by construction, keeping it clear of the staging discontinuity.
+### The config is generated, and split in ownership
 
-Any change to masses, impulses, the aero table or the reference area makes this infeasible rather than merely suboptimal. Re-optimize (warm-started from `rocket.json`, `--maxiter` ≥ 3000, several seeds at σ0 = 0.02…0.10) and read the full diagnostics before reporting a result.
+`optimizer/input/rocket.json` is the only config; `trajectory/rocket.json` is
+gone. Ownership is split down the middle and the split is the point:
 
-### Optimizer loop is not automatic
+- **`report/main.py` owns the whole `stages` array** — all four entries,
+  including `part`/`powered`/`controlled` and the payload coast. Never hand-edit
+  it; change `main.py` and rerun `--write-traj-config`. A bare run warns on
+  stderr, listing every drifted field.
+- **The `pitch` block is optimizer OUTPUT.** `main.py` never writes it and
+  preserves any block already in the file verbatim, so a re-sync cannot destroy
+  a search result. A file created from scratch has no pitch and will not load —
+  that is deliberate: you cannot fly without a program.
 
-`optimize.py` builds a per-run simulator binary under `out/` (removed on exit; concurrent seed runs are safe), searches, and writes the winner to **`out/best.json`** — it never writes `rocket.json`. The CMA-ES state is checkpointed to `out/<stem>-cma.pkl` every 10 iterations; `--resume <pkl>` continues an interrupted or finished search (pass a larger `--maxiter` to extend). Promoting a result means copying `t_vertical` and the per-stage `pitch` arrays from `out/best.json` into `traj/rocket.json` yourself (`out/` is untracked — regenerable output). Settings that mattered on this landscape: `--maxiter` ≥ 1500 (the 150 default is severely under-converged), best-of-N over several seeds, and keeping `--h-opt` equal to `--h-final` at 0.1 s — at h = 0.5 the α peaks read ~0.1° low, enough to make an infeasible solution look feasible during the search.
+The file is gitignored, so it does not exist in a fresh clone.
 
-### Reference geometry in `constants.go`
+### Tests
 
-`RrefAll = 0.785` and `Lref = 16.393` are the bounding box of `rocket.stl`, measured with `openfoam/gen_case.py`'s `stl_bbox()` — the same function that writes `Aref`/`lRef` into each CFD case, so the simulator and the coefficients share one reference by construction. Refresh both after any change to `main.py`'s d_(м i)/L_i or to `rocket.scad`; the recipe is in the comment there.
-
-`Lref` exceeds the 16.39 m stack height by the 3 mm `eps` overhang `rocket.scad` uses to fuse stacked sections into one solid. It scales only `Mz`, which `activeAccel` discards, so its exact value is cosmetic. `RrefAll` is not: it scales every aerodynamic force — which is why the (3.44) shortening was safe to land without a re-sweep: L_i reaches no diameter, so `RrefAll` and therefore `Aref` did not move.
+Only `atmosphere/` has tests (`TestGOSTAtmosphere` conformance against the
+printed GOST tables, `TestAtmosphereCharacterization`). The golden trajectory
+tests that pinned the old simulator went with it. `go vet ./...` is clean.
 
 ## Geometry and CFD (`rocket.scad`, `openfoam/`)
 
-The aerodynamic chain is `main.py` → `rocket-params.scad` → `rocket.scad` → STL → `gen_case.py` → snappyHexMesh → `averages.csv` → `traj/aero.go`.
+The aerodynamic chain is `report/main.py` → `openscad/rocket-params.scad` → `openscad/rocket.scad` → `openscad/out/*.stl` → `make openfoam-input` → `openfoam/input/*.stl` → `gen_case.py` → snappyHexMesh → `openfoam/out/averages.csv` → `trajectory/aero/aero.go`.
 
-`rocket.scad` is the **outer mold line only** — the surface the flow sees. No motor internals, no bores, no charge cavities, and no nozzles (nozzle bells broke snappyHexMesh and were dropped in `a540884`). Every section is a solid of revolution unioned with an `eps` overlap, so each STL exports as one genus-0 manifold shell.
+`openscad/rocket.scad` is the **outer mold line only** — the surface the flow sees. No motor internals, no bores, no charge cavities, and no nozzles (nozzle bells broke snappyHexMesh and were dropped in `a540884`). Every section is a solid of revolution unioned with an `eps` = 3 mm overlap, so each STL exports as one genus-0 manifold shell.
 
-`main.py` owns the dimensions via `rocket-params.scad` (`--write-scad-params`, same contract as `--write-traj-config`: stderr-only warnings, clean stdout). `rocket.scad` holds the shape logic plus the structural constants `main.py` does not compute — the interstage, adapter, nav-module and warhead dimensions.
+`report/main.py` owns the dimensions via `openscad/rocket-params.scad` (`--write-scad-params`: stderr-only warnings, clean stdout). It is generated but stays **tracked**, so a fresh clone opens in OpenSCAD without running the generator. `rocket.scad` holds the shape logic plus the structural constants `main.py` does not compute — the interstage, adapter, nav-module and warhead dimensions.
 
-**Every stage now flies at its own motor diameter.** The seating condition
+**Every stage flies at its own motor diameter.** The seating condition
 
     d_м >= d_a (1 + sqrt(2)) + 2 l_a sin(δ_с)
 
-is satisfied on the motor itself for all three stages (margins 378 / 0.6 / 15 mm at the prototype's δ_с = 8° / 6° / 4°), so the external shell that used to wrap a too-narrow stage 3 is retired and `rocket.scad` sets `d_ext = d_m`. `main.py`'s `STAGES` note explains how stages 2 and 3 buy that fit with their λ_з/ρ_т·u pair. The swing term is the bell alone, `l_a sin δ_с` about the throat — `l_дк` does not enter, which is what leaves stage 2 its 0.6 mm at 6°.
+is satisfied on the motor itself for all three stages (margins 378 / 0.6 / 15 mm at δ_с = 8° / 6° / 4°), so the external shell that used to wrap a too-narrow stage 3 is retired and `rocket.scad` sets `d_ext = d_m`. `report/main.py`'s `STAGES` note explains how stages 2 and 3 buy that fit with their l̄_з/ρ_т·u pair. The swing term is the bell alone, `l_a sin δ_с` about the throat — `l_дк` does not enter, which is what leaves stage 2 its 0.6 mm at 6°.
 
-The `Makefile` maps parts to STLs the way `gen_case.py` expects: `all → rocket.stl`, `stage2up`, `stage3up`, `head`. In the STL pattern rule `$(SCAD)` must stay the **first** prerequisite — the recipe passes `$<` to OpenSCAD, and putting `$(PARAMS)` first would render the parameter file instead.
+**One reference for every part.** `gen_case.py` meshes each part against *its
+own* bounding box but non-dimensionalises **all** parts by `part="all"`
+(`L_all`, `R_all` at `gen_case.py:210`). That is why `trajectory` can carry a
+single `Aref` and apply it to the `stage2up`/`stage3up`/`head` coefficients
+without rescaling — the invariant is deliberate, not an accident.
 
-**`openfoam/results/averages.csv` is stale as of the (3.44) change.** L_i dropped 1.44 m in total (7.70/3.95/2.18 → 7.14/3.51/1.75) and the STLs were regenerated, but the coefficients were solved on the old ~18 m mold line and have not been re-swept. This is safe to carry, not free: `RrefAll` is unchanged, so `Aref` still matches what `gen_case.py` non-dimensionalised by and the retained C_x/C_y remain dimensionally consistent — the trajectory is bit-identical, verified by diffing `-metrics`. What is unbounded is fidelity. Less wetted area means the real C_x is lower, so range is pessimistic; but afterbody length also shifts C_y, and the |α| margins sit at 0.1 % of the §4.4 limits, so "conservative on range" does **not** imply "conservative on the α constraints". Only a re-sweep closes that.
+**The two modules hand off through `openfoam/input/`, and only there.** `make stls` renders `openscad/out/<part>.stl` (the stem of the target *is* the `PART` selector), and `make openfoam-input` copies them across. `gen_case.py` and `sweep.py` never build geometry — they exit with an error naming `make openfoam-input` if a part is missing. That is what stops a long sweep from silently re-rendering against a changed `rocket-params.scad` halfway through. In the STL pattern rule `$(SCAD)` must stay the **first** prerequisite — the recipe passes `$<` to OpenSCAD, and putting `$(PARAMS)` first would render the parameter file instead.
 
-Case generation needs only `make` and `openscad`; meshing and solving need OpenFOAM v2512 with HiSA. `sweep.py --dry-run` writes nothing. **Never run `plot_coeffs.py` without a complete sweep** — it rebuilds `averages.csv`, the only surviving CFD result, and a partial set of inputs silently truncates it.
+`sweep.py --dry-run` writes nothing and currently queues 96 cases (33 preferential, 63 rest; 25 snappyHexMesh mesh groups). `averages.csv` holds 101 rows — `all` 55, `stage3up` 20, `stage2up` 16, `head` 10 — so the shipped table is not exactly the current queue.
+
+**`openfoam/out/averages.csv` was solved on the pre-shortening mold line.** L_i dropped 1.44 m in total (7.70/3.95/2.18 → 7.14/3.51/1.75) and the STLs were regenerated, but the coefficients have not been re-swept. This is safe to carry, not free: `RrefAll` is unchanged, so `Aref` still matches what `gen_case.py` non-dimensionalised by and the retained C_x/C_y remain dimensionally consistent. What is unbounded is fidelity — less wetted area means the real C_x is lower (range pessimistic), but afterbody length also shifts C_y, so "conservative on range" does **not** imply "conservative on α". Only a re-sweep closes that.
+
+Case generation needs only `make` and `openscad`; meshing and solving need OpenFOAM v2512 with HiSA. **Never run `plot_coeffs.py` without a complete sweep** — it rebuilds `averages.csv`, the only surviving CFD result, and a partial set of inputs silently truncates it. Since `openfoam/out/` is gitignored, that file is now unbacked by git: treat it as precious, and copy it somewhere safe before any operation that could rewrite it.
+
+## Known drift
+
+- **`report/main.py`'s `K_V` comment block** refers to `traj/pitch.go`'s
+  `FrameAlpha` and `ShapeHermite`. Both are gone; the block is a design-history
+  record, and its range figures (12 749 km, k_V = 1.176) are not reproducible
+  against the current simulator. Keep the reasoning, but do not cite the numbers
+  as current results.
+- **`report/archive.typ`** lags the scripts on the nozzle/length block (18 of
+  129 emitted equations) — see [The report](#the-report-reportarchivetyp).
+- **`openfoam/out/averages.csv`** predates the (3.44) length change and is no
+  longer tracked by git. See the CFD section above.
 
 ## Output format
 
@@ -134,10 +222,8 @@ Scripts emit Typst source, not plain text. Inline strings use Typst math syntax 
 
 Multi-curve charts store each curve as a pair of columns (X, Y). Row 0 holds curve labels; row 1 holds `X, Y` headers. Use `pd.read_csv(path, header=1)` for data and a separate `pd.read_csv(path, header=None, nrows=1)` pass to read labels — see `alpha_dv()` in `utils.py` for the pattern.
 
-## `preliminary-29700/`
-
-A tracked record of the mass-reduction study that produced the current design (29 724 kg / 12 418 km, down from 39 523 kg). Its `main.py` deltas and 14-arc pitch program are **already applied at HEAD**, so treat it as history plus a list of open items (λ_2/λ_3 below their bands, the stage-3 nozzle condition (3.43) failing, the zero-margin §4.4 limits). Its own README calls the folder untracked; that is no longer accurate. It is excluded from `pyright` and is the only source of `ruff` violations.
-
 ## Python environment
 
-Use `uv` (see global CLAUDE.md). Python 3.11, dependencies: `numpy`, `pandas`, `pandas-stubs`, `cma` and `matplotlib` (the latter two for `traj/`). Go 1.26 for the simulator.
+Use `uv` (see global CLAUDE.md). Python 3.11, dependencies: `numpy`, `pandas`, `pandas-stubs`, `matplotlib` (used by `openfoam/plot_coeffs.py`) and `cma` (declared for the optimizer that `optimizer/` will hold). Go 1.27 for the simulator.
+
+`report/` and `openfoam/` are **script directories, not packages**: each script is run directly, so its own directory is `sys.path[0]` and the intra-module imports (`from utils import …`, `import manifest`) resolve without any packaging. `[tool.ruff] src` in `pyproject.toml` tells isort the same thing — drop it and those imports get filed as third-party.

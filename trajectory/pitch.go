@@ -33,8 +33,10 @@ var pitchShapes = map[string]pitchArc{
 	},
 }
 
+// segment returns the index of the arc active at t, -1 before the program
+// starts, or len(Segments) once t is past the last arc.
 func (p Pitch) segment(t float64) int {
-	if t <= p.TStart {
+	if t <= p.TStart || len(p.Segments) == 0 {
 		return -1
 	}
 	i, _ := slices.BinarySearchFunc(p.Segments, t, func(s PitchSegment, t float64) int {
@@ -48,10 +50,18 @@ func (p Pitch) segment(t float64) int {
 }
 
 // Pitch returns the current programmed pitch in radians.
+//
+// Past the last arc the final commanded angle is HELD. Evaluating the arc
+// beyond its own TEnd would put (t-tStart)/(tEnd-tStart) above 1, and cos(pi*x^k)
+// then swings the vehicle back and forth for the whole coast; holding is what an
+// open-loop program actually does once it runs out of instructions.
 func (p Pitch) Pitch(t float64) float64 {
 	is := p.segment(t)
 	if is == -1 {
 		return p.ThetaDegStart * d2r
+	}
+	if is >= len(p.Segments) {
+		return p.Segments[len(p.Segments)-1].ThetaDeg * d2r
 	}
 	s := p.Segments[is]
 

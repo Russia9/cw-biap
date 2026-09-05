@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent  # openfoam/
-DEFAULT_STATE = HERE / "sweep_state.json"
+DEFAULT_STATE = HERE / "out" / "sweep_state.json"
 
 OK_STATUS = "done"
 

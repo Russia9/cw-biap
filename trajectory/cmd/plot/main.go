@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"os"
 	"traj"
 
 	"gonum.org/v1/plot"
@@ -10,11 +11,20 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
+// args[1] = rocket.json path
 func main() {
+	if len(os.Args) != 2 {
+		panic("usage: plot <rocket.json>")
+	}
+
 	// Loading rocket.json
-	rocket, err := traj.LoadRocketJSON("rocket.json")
+	rocket, err := traj.LoadRocketJSON(os.Args[1])
 	if err != nil {
 		panic(fmt.Errorf("rocket.json: %w", err))
+	}
+
+	if err := os.MkdirAll("out", 0o755); err != nil {
+		panic(err)
 	}
 
 	p := plot.New()

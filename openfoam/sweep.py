@@ -45,13 +45,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent  # openfoam/
 ROOT = HERE.parent  # repo root (has the Makefile)
 GEN_CASE = HERE / "gen_case.py"
-
-PART_STL = {  # Makefile target per part (mirrors gen_case.PART_STL)
-    "all": "rocket.stl",
-    "stage2up": "stage2up.stl",
-    "stage3up": "stage3up.stl",
-    "head": "head.stl",
-}
+INPUT = HERE / "input"  # geometry in (mirrors gen_case.INPUT)
+OUT = HERE / "out"  # everything this module generates
 
 # --- sweep matrix ----------------------------------------------------------
 # Part order is the priority order across parts. For each part, Ma and alpha are
@@ -418,16 +413,16 @@ def preflight(queue: list[Case], allow_stray: bool = False) -> None:
             "before starting, or pass --allow-stray to run anyway."
         )
 
-    # Build any STLs that gen_case will need (it is invoked with --no-stl below).
+    # Geometry is staged, never built here: openscad/ owns the mold line and
+    # `make openfoam-input` copies it in, so a sweep cannot silently re-render
+    # halfway through against a changed rocket-params.scad.
     parts = {c.part for c in queue} | {"all"}  # 'all' is always the coefficient reference
-    targets = sorted({PART_STL[p] for p in parts})
-    missing_stls = [t for t in targets if not (ROOT / t).is_file()]
-    if missing_stls:
-        if shutil.which("make") is None:
-            sys.exit(f"error: STLs missing {missing_stls} and 'make' not on PATH to build them")
-        run = subprocess.run(["make", *missing_stls, "SCALE=1"], cwd=ROOT, check=False)
-        if run.returncode != 0:
-            sys.exit("error: failed to build STLs (make returned non-zero)")
+    missing = sorted(p for p in parts if not (INPUT / f"{p}.stl").is_file())
+    if missing:
+        sys.exit(
+            f"error: geometry missing from {INPUT}: {missing}\n"
+            "  run `make openfoam-input` first"
+        )
 
 
 # --- per-case pipeline -----------------------------------------------------
@@ -459,7 +454,7 @@ def run_case(
         sys.executable, str(GEN_CASE),
         "--part", case.part, "--regime", case.regime,
         "--Ma", fmt_num(case.ma), "--alpha", fmt_num(case.alpha),
-        "--np", str(args.np), "--out", str(out), "--no-stl",
+        "--np", str(args.np), "--out", str(out),
     ]
     run_step("generate", gen_cmd, ROOT, out / "log.gen", args.gen_timeout)
     set_status(state, args.state, case, base, status="generated", error="")
@@ -513,10 +508,10 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--dry-run", action="store_true", help="print the ordered queue and exit")
-    ap.add_argument("--base", type=Path, default=HERE, help="root for case dirs (default openfoam/)")
-    ap.add_argument("--state", type=Path, default=HERE / "sweep_state.json", help="manifest path")
-    ap.add_argument("--results-csv", type=Path, default=HERE / "sweep_results.csv")
-    ap.add_argument("--log", type=Path, default=HERE / "sweep.log")
+    ap.add_argument("--base", type=Path, default=OUT, help="root for case dirs (default openfoam/out/)")
+    ap.add_argument("--state", type=Path, default=OUT / "sweep_state.json", help="manifest path")
+    ap.add_argument("--results-csv", type=Path, default=OUT / "sweep_results.csv")
+    ap.add_argument("--log", type=Path, default=OUT / "sweep.log")
     ap.add_argument("--np", type=int, default=12, help="MPI subdomains per case (forwarded to gen_case)")
     ap.add_argument("--subsonic-max", type=float, default=1.0, help="Ma < this -> subsonic regime")
     ap.add_argument("--only-part", action="append", choices=PARTS, help="restrict to part(s); repeatable")

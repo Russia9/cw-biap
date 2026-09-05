@@ -15,7 +15,7 @@ FoamFile
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 // Cylindrical O-grid background (same 5-block topology as the arc case), but in
-// METRES (scale 1) because rocket.stl is exported in metres.  Flow is +x; the
+// METRES (scale 1) because all.stl is exported in metres.  Flow is +x; the
 // model.stl nose tip is at x = 0 and the aft-most plane at x = L = 18.29 m.
 //
 // Domain (L = 18.29 m = full PART="all" length):

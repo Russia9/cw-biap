@@ -34,6 +34,10 @@ func main() {
 		panic(fmt.Errorf("aero: %w", err))
 	}
 
+	if err := os.MkdirAll("out", 0o755); err != nil {
+		panic(err)
+	}
+
 	// Init model
 	model := traj.InitModel(rocket, aero)
 	tChar := make([]float64, 0)

@@ -1,0 +1,6 @@
+# Generated meshes and renders: `make stls`, `make png`.
+#
+# rocket-params.scad is generated too (report/main.py --write-scad-params) but
+# stays TRACKED: rocket.scad includes it, so a fresh clone must be openable in
+# OpenSCAD without running the generator first.
+out/

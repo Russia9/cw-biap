@@ -54,7 +54,12 @@ func LoadRocketJSON(path string) (Rocket, error) {
 		}
 	}
 
-	// Validate pitch program
+	// Validate pitch program. It is optimizer OUTPUT, not sizing input, so a
+	// config written by report/main.py alone carries none -- say so plainly
+	// rather than flying a vehicle pinned at theta = 0.
+	if len(r.Pitch.Segments) == 0 {
+		return Rocket{}, fmt.Errorf("pitch: no program (add a pitch block from the optimizer)")
+	}
 	seen := make(map[float64]struct{})
 	for i, segment := range r.Pitch.Segments {
 		if _, ok := seen[segment.TEnd]; ok {

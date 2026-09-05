@@ -1,0 +1,7 @@
+# Written by `uv run python report/main.py --write-traj-config`: the physical
+# rocket the search starts from. Regenerable, so it is not tracked.
+input/
+
+# Search output, plus CMA-ES scratch (rewritten on every run).
+out/
+outcmaes/

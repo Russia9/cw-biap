@@ -15,7 +15,13 @@ const (
 
 const (
 	RrefAll = 0.785  // full-rocket max radius [m] -> Aref = π·0.785² = 1.9359 m²
-	Lref    = 17.823 // full-rocket length [m], nose tip to aft plane
+	Lref    = 16.393 // full-rocket length [m], nose tip to aft plane
+	// Both are the all.stl bounding box from openfoam/gen_case.py's stl_bbox(),
+	// the same function that writes Aref/lRef into every CFD case. Refresh after any
+	// change to report/main.py's d_(м i)/L_i or to openscad/rocket.scad:
+	//   make stls && uv run python -c "import sys; sys.path.insert(0,'openfoam');
+	//   from pathlib import Path; from gen_case import stl_bbox;
+	//   print(stl_bbox(Path('openscad/out/all.stl')))"
 )
 
 // Aref is the reference area for aerodynamic forces/moments [m^2].

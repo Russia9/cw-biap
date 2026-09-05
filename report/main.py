@@ -17,6 +17,7 @@ from typst import (
     stage_header,
 )
 from utils import (
+    ASSETS,
     G0,
     burn_rate,
     combustion_temp,
@@ -176,12 +177,33 @@ STAGES = [
 M_BCH = 500
 M_AU = 120
 
-# Trajectory-simulator config kept in sync by sync_traj_config().
-TRAJ_CONFIG_PATH = "traj/rocket.json"
+# CFD part key per stage: the coefficient table is solved on the flight
+# configuration each stage carries, so stage i flies the "everything from stage
+# i upward" mold line (openfoam/out/averages.csv, trajectory/aero/aero.go).
+AERO_PARTS = ["all", "stage2up", "stage3up"]
+
+# Payload coast, carried into the simulator config as a fourth, unpowered stage.
+# D_PL mirrors rocket.scad's warhead body diameter (the `head` STL measures
+# R = 0.27 m); the simulator does not read `dm`, so it is reference only.
+# COAST_HORIZON is a carry-on time, not a burn: the last stage is carried past
+# it regardless, and integration stops when the trajectory returns to H = 0.
+D_PL = 0.54
+COAST_HORIZON = 3000.0
+
+# Module roots. Every path this script reads or writes is anchored to the file
+# rather than to the working directory, so `uv run python report/main.py` behaves
+# the same from anywhere.
+HERE = Path(__file__).resolve().parent  # report/
+ROOT = HERE.parent  # repo root
+
+# Simulator config kept in sync by sync_traj_config(). This script owns the
+# physical stage fields; the pitch program is optimizer OUTPUT, so it is never
+# written here — only preserved if the file already carries one.
+TRAJ_CONFIG_PATH = ROOT / "optimizer" / "input" / "rocket.json"
 
 # OpenSCAD parameter file kept in sync by sync_scad_params(). rocket.scad
 # includes it and adds the structural dimensions this script does not compute.
-SCAD_PARAMS_PATH = "rocket-params.scad"
+SCAD_PARAMS_PATH = ROOT / "openscad" / "rocket-params.scad"
 
 # -------------------------------------------------------------------
 # Material properties (assets/materials.csv)
@@ -231,8 +253,8 @@ H_RUDDER = 0.2  # end-rudder protrusion h, the third term of (3.44), m
 # (3.44) nor the mold line, so the choice does not move any downstream result.
 K_DN = [0.2, 0.1, 0.1]
 
-CHART_FA = "assets/chart-3-5-fa-fkp-pa-pk.csv"
-CHART_DTZ = "assets/chart-3-6-delta-tz-d-m.csv"
+CHART_FA = ASSETS / "chart-3-5-fa-fkp-pa-pk.csv"
+CHART_DTZ = ASSETS / "chart-3-6-delta-tz-d-m.csv"
 
 
 class StageProps(NamedTuple):
@@ -870,16 +892,21 @@ def emit_geometry(d_m: list[float]) -> list[Geometry]:
 
 
 def traj_stage_fields(thrust: list[Thrust], sub: Subrockets) -> list[dict]:
-    """Per-stage physical fields of traj/rocket.json, rounded to the precision
-    the report tables quote so the document and the simulator agree digit for
-    digit.
+    """The `stages` array of the simulator config, in trajectory/rocket.go's
+    schema, rounded to the precision the report tables quote so the document and
+    the simulator agree digit for digit.
 
-    isp_sl is P_уд.0, the specific thrust against sea-level back pressure,
-    which is what traj/model.go's pressure interpolation expects at its lower
+    isp_sl is P_уд.0, the specific thrust against sea-level back pressure, which
+    is what trajectory/model.go's pressure interpolation expects at its lower
     anchor. Only stage 1 fires low enough for it to matter: the upper stages
     ignite at 50 km and 171 km, where ambient is below 0.001 bar and the
-    interpolation returns essentially isp_vac regardless."""
-    return [
+    interpolation returns essentially isp_vac regardless.
+
+    The fourth entry is the payload coast: unpowered and uncontrolled, so the
+    simulator flies it at alpha = 0 with no thrust. `burn_time` is a carry-on
+    horizon rather than a real duration — `stage()` carries the last stage past
+    it regardless — and the impulses are zero because `Powered` is false."""
+    stages = [
         {
             "m0": round(sub.m0[i]),
             "m_fuel": round(sub.omega_z[i]),
@@ -887,43 +914,59 @@ def traj_stage_fields(thrust: list[Thrust], sub: Subrockets) -> list[dict]:
             "isp_sl": round(thrust[i].P_ud_0, 3),
             "isp_vac": round(thrust[i].P_ud_v, 3),
             "dm": round(sub.d_m[i], 2),
+            "part": AERO_PARTS[i],
+            "powered": True,
+            "controlled": True,
         }
         for i in range(len(STAGES))
     ]
+    stages.append(
+        {
+            "m0": round(M_BCH + M_AU),
+            "m_fuel": 0.0,
+            "burn_time": COAST_HORIZON,
+            "isp_sl": 0.0,
+            "isp_vac": 0.0,
+            "dm": D_PL,
+            "part": "head",
+            "powered": False,
+            "controlled": False,
+        }
+    )
+    return stages
 
 
 def sync_traj_config(thrust: list[Thrust], sub: Subrockets, write: bool) -> None:
-    """Keep the physical fields of traj/rocket.json in sync with this script.
+    """Keep the `stages` array of the simulator config in sync with this script.
 
-    This script owns payload_mass and the per-stage m0/m_fuel/burn_time/
-    isp_sl/isp_vac/dm. Everything else in that file — t_vertical, the pitch
-    arcs, limits and the part keys — is optimizer output and is preserved
-    verbatim.
+    This script owns the whole `stages` array and nothing else. The pitch
+    program is optimizer OUTPUT, not an input to sizing, so it is never written
+    here — any `pitch` block (or any other key) already in the file is preserved
+    verbatim, and a file created from scratch simply has none.
 
     Without ``write`` the file is only checked, and any drift is reported on
     stderr so that piping stdout into the Typst report stays unaffected."""
     path = Path(TRAJ_CONFIG_PATH)
-    if not path.exists():
-        return
-
-    cfg = json.loads(path.read_text(encoding="utf-8"))
-    payload = round(M_BCH + M_AU)
-    fields = traj_stage_fields(thrust, sub)
+    want = traj_stage_fields(thrust, sub)
+    cfg = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    have = cfg.get("stages", [])
 
     drift = []
-    if cfg.get("payload_mass") != payload:
-        drift.append(f"payload_mass: {cfg.get('payload_mass')} -> {payload}")
-    for i, (stage, want) in enumerate(zip(cfg.get("stages", []), fields), start=1):
-        for key, value in want.items():
-            if stage.get(key) != value:
-                drift.append(f"stage {i} {key}: {stage.get(key)} -> {value}")
+    if len(have) != len(want):
+        drift.append(f"stage count: {len(have)} -> {len(want)}")
+    for i, stage in enumerate(want, start=1):
+        old = have[i - 1] if i <= len(have) else {}
+        for key, value in stage.items():
+            if old.get(key) != value:
+                drift.append(f"stage {i} {key}: {old.get(key)} -> {value}")
 
     if not drift:
         return
 
+    rel = path.relative_to(ROOT)
     if not write:
         print(
-            f"warning: {TRAJ_CONFIG_PATH} is out of sync with main.py "
+            f"warning: {rel} is out of sync with main.py "
             f"({len(drift)} field(s)); rerun with --write-traj-config",
             file=sys.stderr,
         )
@@ -931,13 +974,12 @@ def sync_traj_config(thrust: list[Thrust], sub: Subrockets, write: bool) -> None
             print(f"  {line}", file=sys.stderr)
         return
 
-    cfg["payload_mass"] = payload
-    for stage, want in zip(cfg.get("stages", []), fields):
-        stage.update(want)
+    cfg["stages"] = want
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    print(f"updated {TRAJ_CONFIG_PATH} ({len(drift)} field(s))", file=sys.stderr)
+    print(f"updated {rel} ({len(drift)} field(s))", file=sys.stderr)
 
 
 def scad_params(geo: list[Geometry], sub: Subrockets) -> str:
@@ -955,7 +997,7 @@ def scad_params(geo: list[Geometry], sub: Subrockets) -> str:
 
     return "\n".join(
         [
-            "// Generated by `uv run python main.py --write-scad-params`.",
+            "// Generated by `uv run python report/main.py --write-scad-params`.",
             "// Do not edit — change main.py and rerun the generator.",
             "// Index 0/1/2 = stage 1/2/3; all lengths in metres.",
             "",
@@ -986,13 +1028,14 @@ def sync_scad_params(geo: list[Geometry], sub: Subrockets, write: bool) -> None:
     whenever main.py is newer, and an early return here would make every `make`
     rerun the generator forever."""
     path = Path(SCAD_PARAMS_PATH)
+    rel = path.relative_to(ROOT)
     want = scad_params(geo, sub)
     have = path.read_text(encoding="utf-8") if path.exists() else None
 
     if not write:
         if have is not None and have != want:
             print(
-                f"warning: {SCAD_PARAMS_PATH} is out of sync with main.py; "
+                f"warning: {rel} is out of sync with main.py; "
                 f"rerun with --write-scad-params",
                 file=sys.stderr,
             )
@@ -1001,7 +1044,7 @@ def sync_scad_params(geo: list[Geometry], sub: Subrockets, write: bool) -> None:
     path.write_text(want, encoding="utf-8")
     print(
         f"{'wrote' if have is None else 'updated' if have != want else 'refreshed'} "
-        f"{SCAD_PARAMS_PATH}",
+        f"{rel}",
         file=sys.stderr,
     )
 

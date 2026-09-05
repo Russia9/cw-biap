@@ -1,0 +1,7 @@
+# Geometry staged in by `make openfoam-input`. openscad/ owns the mold line;
+# this module never builds it, so nothing here is a source of truth.
+input/
+
+# Everything the CFD chain generates: the per-case directories, the per-case
+# convergence CSVs, the aggregated averages.csv, sweep bookkeeping and logs.
+out/

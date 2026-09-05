@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Plot and summarize the per-case coefficient histories from `convergence.py`.
 
-`convergence.py` writes one tidy CSV per case under `results/`
+`convergence.py` writes one tidy CSV per case under `out/`
 (`<part>_<regime>_Ma<Ma>_a<alpha>.csv`, columns Time + every coefficient). This
 script consumes those and, for each case:
 
-  * draws one PNG with two stacked panels -> `results/plots/<case>.png`
+  * draws one PNG with two stacked panels -> `out/plots/<case>.png`
       top:    Cd, Cl, Cs   vs Time (iteration)
       bottom: CmPitch, CmRoll, CmYaw vs Time
     The averaging window (last --window iterations) is shaded so the plot shows
     exactly what the summary averaged over.
-  * contributes one row to `results/averages.csv`: part, regime, Ma, alpha,
+  * contributes one row to `out/averages.csv`: part, regime, Ma, alpha,
     n_iters, then mean+std of Cd, Cl, Cs, CmPitch, CmRoll, CmYaw over the window.
 
 Re-runnable as cases arrive: it rebuilds the plots and averages.csv from whatever
@@ -18,7 +18,7 @@ result CSVs currently exist (idempotent overwrite). A short or unreadable CSV is
 warned and skipped, never fatal.
 
 Cases `sweep.py` recorded as *not* done are skipped: averaging the tail of a run
-that timed out puts a meaningless row into averages.csv, which feeds traj/.
+that timed out puts a meaningless row into averages.csv, which feeds trajectory/.
 `convergence.py` already gates this upstream; the check is repeated here so a
 result CSV left over from an older run cannot slip through. Pass
 --ignore-manifest to disable.
@@ -38,11 +38,13 @@ from typing import NamedTuple
 import matplotlib
 
 matplotlib.use("Agg")  # headless: just write PNGs
-import manifest
 import matplotlib.pyplot as plt
 import pandas as pd
 
+import manifest
+
 HERE = Path(__file__).resolve().parent  # openfoam/
+OUT = HERE / "out"  # everything this module generates
 
 # Filename -> case metadata. Doubles as the file filter: the output averages.csv
 # and the stray `..._export.csv` duplicate fail the `$` anchor and are skipped.
@@ -127,8 +129,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--results", type=Path, default=HERE / "results",
-                    help="dir with the per-case CSVs (default openfoam/results/)")
+    ap.add_argument("--results", type=Path, default=OUT,
+                    help="dir with the per-case CSVs (default openfoam/out/)")
     ap.add_argument("--plots", type=Path, default=None,
                     help="output dir for PNGs (default <results>/plots/)")
     ap.add_argument("--summary", type=Path, default=None,
