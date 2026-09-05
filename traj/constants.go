@@ -20,3 +20,6 @@ const (
 
 // Aref is the reference area for aerodynamic forces/moments [m^2].
 var Aref = math.Pi * RrefAll * RrefAll
+
+const r2d = 180 / math.Pi
+const d2r = math.Pi / 180

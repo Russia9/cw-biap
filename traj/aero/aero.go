@@ -49,6 +49,11 @@ func LoadCSV(path string) (map[string]*Aero, error) {
 		rawCd[row.Part] = append(rawCd[row.Part], na.Point3D{X: row.Ma, Y: row.Alpha, Z: row.Cd})
 		rawCl[row.Part] = append(rawCl[row.Part], na.Point3D{X: row.Ma, Y: row.Alpha, Z: row.Cl})
 		rawCmPitch[row.Part] = append(rawCmPitch[row.Part], na.Point3D{X: row.Ma, Y: row.Alpha, Z: row.CmPitch})
+		if row.Alpha != 0 {
+			rawCd[row.Part] = append(rawCd[row.Part], na.Point3D{X: row.Ma, Y: -row.Alpha, Z: row.Cd})
+			rawCl[row.Part] = append(rawCl[row.Part], na.Point3D{X: row.Ma, Y: -row.Alpha, Z: -row.Cl})
+			rawCmPitch[row.Part] = append(rawCmPitch[row.Part], na.Point3D{X: row.Ma, Y: -row.Alpha, Z: -row.CmPitch})
+		}
 	}
 
 	res := make(map[string]*Aero, len(rawCd))
