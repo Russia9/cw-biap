@@ -1,7 +1,7 @@
 """CMA-ES search of the pitch program for trajectory/cmd/main.
 
 Stages come from optimizer/input/rocket.json (written by report/main.py), the starting
-pitch block from seed.json (any config with a pitch block, e.g. a previous
+pitch block from seed.json (any hermite config with a pitch block, e.g. a previous
 best.json). The program is tuned so the range hits --target with the
 §4.4 limits as penalties. The result goes to optimizer/out/best.json, which the
 simulator can fly as is.
@@ -45,9 +45,11 @@ LIMITS = {
 }
 
 # vector: [theta_deg x N | w x N-1 | k x N | t_start]; the arcs tile
-# [t_start, t_powered] in proportion to w, the last arc's weight pinned at 1
-BOUNDS = {"theta": (5, 89), "w": (0.1, 10), "k": (1, 8), "t_start": (5, 40)}
-STDS = {"theta": 10, "w": 0.5, "k": 2, "t_start": 5}
+# [t_start, t_powered] in proportion to w, the last arc's weight pinned at 1.
+# k is an arc's exit slope in deg/s, boxed by the §4.4 rate limit; the cubic's
+# interior can still overshoot it, which the pitch_rate penalty catches
+BOUNDS = {"theta": (5, 89), "w": (0.1, 10), "k": (-3, 3), "t_start": (5, 40)}
+STDS = {"theta": 10, "w": 0.5, "k": 1, "t_start": 5}
 
 
 def per_block(n, table):
@@ -71,12 +73,15 @@ def x0_from_seed(seed):
 
 
 def resample(segs, t_start, t_powered, m):
-    """Put the program on m evenly spaced arcs, reading theta and k off the old ones."""
+    """Put the program on m evenly spaced arcs, reading theta and k off the old ones.
+
+    Both come off the chords between old knots, so the new program is first order
+    in value and slope alike; the initial std is far larger than that error."""
     t = [s["t_end"] for s in segs]
     return [
         {
             "t_end": float(tt),
-            "shape": "cos",
+            "shape": "hermite",
             "k": float(np.interp(tt, t, [s["k"] for s in segs])),
             "theta_deg": float(np.interp(tt, t, [s["theta_deg"] for s in segs])),
         }
@@ -97,7 +102,12 @@ def pitch_from_x(x, theta_start, t_powered):
         "theta_deg_start": theta_start,
         "t_start": float(t_start),
         "segments": [
-            {"t_end": float(t), "shape": "cos", "k": float(kk), "theta_deg": float(th)}
+            {
+                "t_end": float(t),
+                "shape": "hermite",
+                "k": float(kk),
+                "theta_deg": float(th),
+            }
             for t, kk, th in zip(t_end, k, theta)
         ],
     }
@@ -185,6 +195,10 @@ def main():
     # through the last powered stage, so an intermediate coast still counts
     t_powered = sum(s["burn_time"] for s in stages[: powered[-1] + 1])
     seed = json.loads(args.seed.read_text())["pitch"]
+    if any(s["shape"] != "hermite" for s in seed["segments"]):
+        sys.exit(
+            f"{args.seed}: seed must be hermite (k is an exit slope, not an exponent)"
+        )
     theta_start = seed["theta_deg_start"]
     segs = seed["segments"]
     # Arcs starting after burnout steer nothing; keep the one straddling it, the

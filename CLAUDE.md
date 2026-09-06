@@ -115,7 +115,7 @@ Four layers inside `report/`:
 Go module **`traj`** (the import paths are `traj`, `traj/aero`, `traj/atmosphere` — the module name did not follow the `traj` → `trajectory` directory rename in `7dc0abd`). Go 1.27.
 
 - `model.go` — equations of motion and `InitModel`, which returns a `na.FuncSystem` of four derivatives over the state `[Vx, Vy, x, y]`.
-- `pitch.go` — the programmed pitch ϑ(t): a flat list of arcs, each moving ϑ from the previous arc's `theta_deg` to its own by `t_end`. Only one shape is implemented, `"cos"`, with exponent `k`.
+- `pitch.go` — the programmed pitch ϑ(t): a flat list of arcs, each moving ϑ from the previous arc's `theta_deg` to its own by `t_end`. Two shapes: `"cos"`, where `k` is an exponent and every arc has zero slope at both ends; and `"hermite"`, a cubic where `k` is the arc's **exit slope in deg/s** and the entry slope is read from the previous arc via `exitSlope`, so joints are C¹. A cos arc placed after a hermite one kinks, since cos always enters flat.
 - `rocket.go` — config types and `LoadRocketJSON`, which also validates the program (no zero-length arcs, ordered `t_end`, `k >= 1` so joints are not discontinuous, and no powered-but-uncontrolled stage).
 - `constants.go` — Earth/atmosphere constants and the aerodynamic reference.
 - `aero/aero.go` — loads `averages.csv` into bilinear interpolants per part, mirroring each row to −α (Cd even, Cl and CmPitch odd).
@@ -183,7 +183,10 @@ One script, run as `uv run python optimizer/main.py`. It reads the stages from
 is read, so a `best.json` serves as a seed too; the arc count **inside the powered
 window** fixes the problem size — builds
 `trajectory/cmd/main` once into `optimizer/out/sim`, and runs pycma over the
-vector `[theta_deg × N | w × N-1 | k × N | t_start]`.
+vector `[theta_deg × N | w × N-1 | k × N | t_start]`. Every arc it emits is
+`"hermite"`, so `k` is an exit slope in deg/s boxed at ±3 by the rate limit.
+**Seeds must already be hermite** — there is no cos conversion, a cos seed exits with
+a message, and the pre-hermite `best.json` files are no longer usable as seeds.
 
 **The program is pinned to the powered window.** ϑ(t) steers nothing once the last
 stage burns out — `model.go` reads `Pitch()` only inside the `st.Powered` thrust

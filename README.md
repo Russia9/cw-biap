@@ -90,9 +90,10 @@ The coefficient table is **required**, not optional: there is no drag-free mode.
 
 ## 5. `optimizer/` — pitch search
 
-`main.py` runs CMA-ES (pycma) over the pitch block — `theta_deg` and `k` of every
-arc, their relative durations, and `t_start` — starting from the pitch block in `optimizer/seed.json`
-(a config in the simulator's form; only its `pitch` key is read). It takes the
+`main.py` runs CMA-ES (pycma) over the pitch block — `theta_deg` and exit slope `k`
+of every arc, their relative durations, and `t_start` — starting from the pitch block
+in `optimizer/seed.json` (a config in the simulator's form; only its `pitch` key is
+read, and every arc must be `"hermite"`). It takes the
 stages from `optimizer/input/rocket.json`, flies each candidate with
 `trajectory/cmd/main`, and scores the squared miss from `--target` (km) plus
 penalties on the §4.4 limits: |α| ≤ 1.5° subsonic, ≤ 10° supersonic, ≤ 1.5° at a

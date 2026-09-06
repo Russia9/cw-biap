@@ -23,13 +23,45 @@ type PitchSegment struct {
 	ThetaDeg float64 `json:"theta_deg"`
 }
 
-type pitchArc func(tStart, tEnd, thetaDegStart, thetaDegEnd, k, t float64) float64
+// exitSlope is what a segment hands to the one after it, deg/s.
+func exitSlope(s PitchSegment) float64 {
+	if s.Shape == PitchShapeHermite {
+		return s.K
+	}
+	return 0
+}
+
+type pitchArc func(tStart, tEnd, thetaDegStart, thetaDegEnd, slopeStart, k, t float64) float64
 
 const PitchShapeCos = "cos"
+const PitchShapeHermite = "hermite"
 
 var pitchShapes = map[string]pitchArc{
-	PitchShapeCos: func(tStart, tEnd, thetaDegStart, thetaDegEnd, k, t float64) float64 {
+	PitchShapeCos: func(tStart, tEnd, thetaDegStart, thetaDegEnd, _, k, t float64) float64 {
 		return (thetaDegStart+thetaDegEnd)/2 + (thetaDegStart-thetaDegEnd)/2*math.Cos(math.Pi*math.Pow((t-tStart)/(tEnd-tStart), k))
+	},
+	PitchShapeHermite: func(tStart, tEnd, thetaDegStart, thetaDegEnd, slopeStart, k, t float64) float64 {
+		h := tEnd - tStart
+		if h <= 0 {
+			return thetaDegEnd
+		}
+		s := t - tStart
+		switch {
+		case s <= 0:
+			return thetaDegStart
+		case s >= h:
+			return thetaDegEnd
+		}
+
+		delta := (thetaDegEnd - thetaDegStart) / h // secant rate, deg/s
+
+		m0, m1 := slopeStart, k
+		a := thetaDegStart
+		b := m0
+		c := (3*delta - 2*m0 - m1) / h
+		d := (m0 + m1 - 2*delta) / (h * h)
+
+		return a + s*(b+s*(c+s*d)) // Horner
 	},
 }
 
@@ -67,10 +99,13 @@ func (p Pitch) Pitch(t float64) float64 {
 
 	thetaDegStart := p.ThetaDegStart
 	tStart := p.TStart
+	slopeStart := 0.0
 	if is > 0 {
-		thetaDegStart = p.Segments[is-1].ThetaDeg
-		tStart = p.Segments[is-1].TEnd
+		prev := p.Segments[is-1]
+		thetaDegStart = prev.ThetaDeg
+		tStart = prev.TEnd
+		slopeStart = exitSlope(prev)
 	}
 
-	return pitchShapes[s.Shape](tStart, s.TEnd, thetaDegStart, s.ThetaDeg, s.K, t) * d2r
+	return pitchShapes[s.Shape](tStart, s.TEnd, thetaDegStart, s.ThetaDeg, slopeStart, s.K, t) * d2r
 }
