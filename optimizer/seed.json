@@ -1,0 +1,128 @@
+{
+  "pitch": {
+    "theta_deg_start": 90,
+    "t_start": 5.0,
+    "segments": [
+      {
+        "t_end": 14.12,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 85.53
+      },
+      {
+        "t_end": 22.97,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 82.78
+      },
+      {
+        "t_end": 31.83,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 75.27
+      },
+      {
+        "t_end": 40.68,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 65.0
+      },
+      {
+        "t_end": 49.54,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 54.72
+      },
+      {
+        "t_end": 58.39,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 47.19
+      },
+      {
+        "t_end": 67.24,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 44.43
+      },
+      {
+        "t_end": 75.09,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 44.4
+      },
+      {
+        "t_end": 82.93,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 42.71
+      },
+      {
+        "t_end": 90.77,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 36.53
+      },
+      {
+        "t_end": 100.17,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 23.98
+      },
+      {
+        "t_end": 109.57,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 9.6
+      },
+      {
+        "t_end": 120.07,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 9.6
+      },
+      {
+        "t_end": 130.58,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 9.6
+      },
+      {
+        "t_end": 141.08,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 9.49
+      },
+      {
+        "t_end": 151.58,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 6.47
+      },
+      {
+        "t_end": 160.57,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 6.47
+      },
+      {
+        "t_end": 169.57,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 6.47
+      },
+      {
+        "t_end": 178.56,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 6.47
+      },
+      {
+        "t_end": 187.56,
+        "shape": "cos",
+        "k": 1.0,
+        "theta_deg": 6.46
+      }
+    ]
+  }
+}

@@ -20,7 +20,7 @@ report/ ──> openscad/ ──> openfoam/ ──> trajectory/
 2. `openscad/` — `rocket.scad` turns the same dimensions into STLs.
 3. `openfoam/` — meshes and sweeps them into the aerodynamic coefficient table.
 4. `trajectory/` — the Go simulator flies the design against that table.
-5. `optimizer/` — a stub that will search the pitch program.
+5. `optimizer/` — `main.py` searches the pitch program with CMA-ES against the simulator.
 
 Every generated artifact is gitignored by its own module's `.gitignore`
 (`openscad/out/`, `openfoam/input/` + `out/`, `optimizer/input/` + `out/`,
@@ -36,7 +36,8 @@ mass the assignment fixes is 29 724 kg; `K_V = 1.187` is the knob tuned to hit i
 
 **The trajectory layer is mid-rewrite.** The earlier simulator (per-stage
 Hermite pitch arcs, §4.4 diagnostics, CSV rows, `-metrics`, a CMA-ES driver) was
-replaced at `90701cf` by a smaller integrator, and `optimizer/` is a stub. Range,
+replaced at `90701cf` by a smaller integrator; `optimizer/main.py` is a new,
+smaller CMA-ES driver written against it. Range,
 apogee and §4.4 numbers quoted in `main.py`'s comments and in `archive.typ` come
 from the **old** simulator and cannot currently be reproduced — see
 [Trajectory layer](#trajectory-layer-trajectory) and [Known drift](#known-drift).
@@ -64,8 +65,11 @@ uv run python openfoam/sweep.py --dry-run    # print the 96-case queue, run noth
 cd trajectory
 go build ./... && go test ./...                      # build and test
 go test -run TestGOSTAtmosphere ./atmosphere/        # a single test
-go run ./cmd/main ../optimizer/input/rocket.json ../openfoam/out/averages.csv
+go run ./cmd/main ../optimizer/input/rocket.json ../openfoam/out/averages.csv out/traj.csv
 go run ./cmd/plot ../optimizer/input/rocket.json     # → out/pitch.png
+
+cd ..
+uv run python optimizer/main.py --maxiter 3   # smoke-test the pitch search → optimizer/out/best.json
 ```
 
 Both Go binaries take their config path as a positional argument and create
@@ -116,7 +120,10 @@ Go module **`traj`** (the import paths are `traj`, `traj/aero`, `traj/atmosphere
 - `constants.go` — Earth/atmosphere constants and the aerodynamic reference.
 - `aero/aero.go` — loads `averages.csv` into bilinear interpolants per part, mirroring each row to −α (Cd even, Cl and CmPitch odd).
 - `atmosphere/` — GOST 4401-81, valid to `HBoundary` = 94 km, vacuum above.
-- `cmd/main` — integrate and plot the trajectory; `cmd/plot` — plot the pitch program alone.
+- `cmd/main` — integrate the trajectory and write it as CSV
+  (`t,stage,m,x,y,Vx,Vy,V,r,h,q,Ma,pitch,flightAngle,attack`; angles in rad,
+  `stage` 0-based, each staging instant written twice, `attack` = 0 on an
+  uncontrolled stage); `cmd/plot` — plot the pitch program alone.
 
 RK4, bilinear interpolation and the `Point3D`/`FuncSystem` types come from the
 external `github.com/Russia9/numerical-analysis`; plotting from `gonum.org/v1/plot`.
@@ -145,7 +152,7 @@ programmed pitch, drag along −V and lift normal to it. `Aref` scales both.
   `controlled: false`, `burn_time: 3000` as a carry-on horizon. `stage()`
   carries the last stage past its burn time regardless.
 - **The aero table is a required positional argument**, not an optional flag —
-  `go run ./cmd/main <rocket.json> <averages.csv>`. There is no drag-free mode.
+  `go run ./cmd/main <rocket.json> <averages.csv> <out.csv>`. There is no drag-free mode.
 - Integration stops at H = 0 (`h < 0` requests a half-step), fixed h = 0.1 s.
 - **Past the last pitch arc the final angle is HELD.** Evaluating the arc beyond
   its own `t_end` would put the normalised time above 1, and `cos(pi*x^k)` then
@@ -167,6 +174,55 @@ gone. Ownership is split down the middle and the split is the point:
   that is deliberate: you cannot fly without a program.
 
 The file is gitignored, so it does not exist in a fresh clone.
+
+## Optimizer (`optimizer/main.py`)
+
+One script, run as `uv run python optimizer/main.py`. It reads the stages from
+`optimizer/input/rocket.json`, the starting pitch block from the tracked
+`optimizer/seed.json` — a config in the simulator's form, only its `pitch` key
+is read, so a `best.json` serves as a seed too; the arc count **inside the powered
+window** fixes the problem size — builds
+`trajectory/cmd/main` once into `optimizer/out/sim`, and runs pycma over the
+vector `[theta_deg × N | w × N-1 | k × N | t_start]`.
+
+**The program is pinned to the powered window.** ϑ(t) steers nothing once the last
+stage burns out — `model.go` reads `Pitch()` only inside the `st.Powered` thrust
+branch and the `st.Controlled` α branch, and the payload coast is neither — so an
+arc spent there is a dead search dimension. The `w` block is therefore weights, not
+durations: arcs tile `[t_start, t_powered]` in proportion to `w`, with the last
+weight pinned at 1 (only ratios matter, and a free scale would be a flat direction).
+`t_powered` is the cumulative burn time through the last powered stage, 142.2 s at
+HEAD. Ordering and uniqueness hold by construction because `w > 0`.
+
+On load the seed is trimmed to the arcs that *start* before burnout, plus the one
+straddling it. Counting starts rather than ends is what makes a re-seed lossless:
+a program this script wrote already ends at `t_powered`, and an end-based test would
+shed one arc per run. `--arcs M` resamples the trimmed program onto M evenly spaced
+arcs, reading θ and k off the old breakpoints — that is how a `best.json` from before
+this parametrization (5 in-window arcs of 20) is restored to full resolution. Each candidate is flown in a temp dir under
+`optimizer/out/` (subprocess, 60 s timeout — the integrator only stops at H = 0,
+so an orbital candidate would otherwise never return) and scored from the CSV:
+
+- objective = `((range − target)/100 km)²` + `1e7 · Σ max(0, (v − lim·(1 − 1e-3))/lim)²`
+  over the six §4.4 limits, + `10 · Σ max(0, ϑ_{i+1} − ϑ_i)²`; a run that fails,
+  times out or yields NaN scores `1e15`.
+- the limits are `LIMITS` at the top of the script (deg, deg, deg, deg/s, kPa, km);
+  α is taken over powered rows with q > 1 Pa (the t = 0 row has attack = 90°
+  because the flight angle is undefined at V = 0), q over powered rows only,
+  ϑ̇ by finite difference after masking the zero-length gaps the doubled staging
+  rows produce.
+- **`alpha_sep` is the separation limit**, |α| ≤ 1.5° at a staging event that is
+  still an aerodynamic one — `h ≤ H_ATM` **and** `q ≥ Q_SEP` (1 kPa). Rows are picked
+  by `df.stage.diff() > 0` off the full frame, not `pw`: `cmd/main` resolves the stage
+  from the right, so the row at a separation already carries the new stage and the
+  final one is absent from `pw` altogether. Only the stage 1→2 separation qualifies
+  at HEAD (66.2 s, 40.6 km, 6.35 kPa). An all-vacuum staging set scores 0.0, not NaN,
+  which would otherwise fail every candidate through the `isfinite` guard.
+
+Output is `optimizer/out/best.json` — stages + pitch, plus `target_km` and
+`metrics` keys the Go loader ignores, so the simulator flies the file directly —
+and `best.csv`. The search never writes `optimizer/input/rocket.json`; Ctrl-C
+keeps the best candidate seen so far.
 
 ### Tests
 
@@ -224,6 +280,6 @@ Multi-curve charts store each curve as a pair of columns (X, Y). Row 0 holds cur
 
 ## Python environment
 
-Use `uv` (see global CLAUDE.md). Python 3.11, dependencies: `numpy`, `pandas`, `pandas-stubs`, `matplotlib` (used by `openfoam/plot_coeffs.py`) and `cma` (declared for the optimizer that `optimizer/` will hold). Go 1.27 for the simulator.
+Use `uv` (see global CLAUDE.md). Python 3.11, dependencies: `numpy`, `pandas`, `pandas-stubs`, `matplotlib` (used by `openfoam/plot_coeffs.py`) and `cma` (`optimizer/main.py`). Go 1.27 for the simulator.
 
-`report/` and `openfoam/` are **script directories, not packages**: each script is run directly, so its own directory is `sys.path[0]` and the intra-module imports (`from utils import …`, `import manifest`) resolve without any packaging. `[tool.ruff] src` in `pyproject.toml` tells isort the same thing — drop it and those imports get filed as third-party.
+`report/`, `openfoam/` and `optimizer/` are **script directories, not packages**: each script is run directly, so its own directory is `sys.path[0]` and the intra-module imports (`from utils import …`, `import manifest`) resolve without any packaging. `[tool.ruff] src` in `pyproject.toml` tells isort the same thing — drop it and those imports get filed as third-party.

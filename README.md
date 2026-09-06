@@ -17,7 +17,7 @@ report/ ──> openscad/ ──> openfoam/ ──> trajectory/
 | `report/`     | sizing calculations, Typst output, `archive.typ` | –                     |
 | `openscad/`   | the outer mold line                         | `out/` (STLs, renders)     |
 | `openfoam/`   | the CFD sweep                               | `input/`, `out/`           |
-| `optimizer/`  | the pitch program (stub)                    | `input/`, `out/`           |
+| `optimizer/`  | the CMA-ES pitch search                     | `input/`, `out/`           |
 | `trajectory/` | the Go simulator                            | `out/` (plots)             |
 
 ## 1. `report/` — sizing calculations (Python)
@@ -82,7 +82,7 @@ and create `out/` themselves.
 ```bash
 cd trajectory
 go build ./... && go test ./...
-go run ./cmd/main ../optimizer/input/rocket.json ../openfoam/out/averages.csv
+go run ./cmd/main ../optimizer/input/rocket.json ../openfoam/out/averages.csv out/traj.csv
 go run ./cmd/plot ../optimizer/input/rocket.json    # the pitch program alone
 ```
 
@@ -90,8 +90,28 @@ The coefficient table is **required**, not optional: there is no drag-free mode.
 
 ## 5. `optimizer/` — pitch search
 
-A stub. It will read `optimizer/input/rocket.json` (written by `report/main.py`)
-and write the tuned pitch program to `optimizer/out/`.
+`main.py` runs CMA-ES (pycma) over the pitch block — `theta_deg` and `k` of every
+arc, their relative durations, and `t_start` — starting from the pitch block in `optimizer/seed.json`
+(a config in the simulator's form; only its `pitch` key is read). It takes the
+stages from `optimizer/input/rocket.json`, flies each candidate with
+`trajectory/cmd/main`, and scores the squared miss from `--target` (km) plus
+penalties on the §4.4 limits: |α| ≤ 1.5° subsonic, ≤ 10° supersonic, ≤ 1.5° at a
+stage separation still inside the atmosphere (below 94 km and at 1 kPa or more),
+|ϑ̇| ≤ 3 °/s, q ≤ 120 kPa on the powered leg, apogee ≤ 1800 km.
+
+The arcs tile the powered window and cannot leave it. Past burnout the programmed
+angle drives neither thrust nor angle of attack, so an arc out there is a search
+dimension that cannot change the trajectory.
+
+```bash
+uv run python optimizer/main.py --target 12000 --maxiter 500 --jobs 8
+uv run python optimizer/main.py --arcs 24            # coarser or finer program
+```
+
+The winner goes to `optimizer/out/best.json` — a full config the simulator flies
+as is — with the flown trajectory beside it in `best.csv`. Pass that file back
+as `--seed optimizer/out/best.json` to continue the search at the same resolution,
+or add `--arcs` to change it. The search never writes `optimizer/input/rocket.json`.
 
 ## Environment
 

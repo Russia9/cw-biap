@@ -123,7 +123,7 @@ func main() {
 			Ma = V / a
 		}
 
-		fmt.Fprintf(out, "%.3f,%d,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e\n",
+		fmt.Fprintf(out, "%e,%d,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e\n",
 			t, stI,
 			traj.Mass(st, t, traj.StageT0(r, stI)),
 			res[traj.IX][i].Y, res[traj.IY][i].Y,

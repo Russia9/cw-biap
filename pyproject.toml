@@ -21,12 +21,12 @@ dev = [
 # report/ and openfoam/ are script directories, not packages: each script is run
 # directly, so its own directory is sys.path[0]. Tell isort that, or it files
 # `typst`/`utils` as third-party once they no longer sit at the repo root.
-src = ["report", "openfoam"]
+src = ["report", "openfoam", "optimizer"]
 
 [tool.pyright]
 typeCheckingMode = "standard"
 pythonVersion = "3.11"
 venvPath = "."
 venv = ".venv"
-include = ["report"]
+include = ["report", "optimizer"]
 exclude = ["**/__pycache__", ".venv", "**/out", "**/outcmaes"]
