@@ -178,7 +178,7 @@ def main():
     ap.add_argument(
         "--popsize", type=int, help="CMA-ES population (default 4 + 3 ln n)"
     )
-    ap.add_argument("--sigma0", type=float, default=1.0)
+    ap.add_argument("--sigma0", type=float, default=0.05)
     ap.add_argument("--rng-seed", type=int, default=random.randint(0, 10000000))
     ap.add_argument("--jobs", type=int, default=os.cpu_count())
     args = ap.parse_args()

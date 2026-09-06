@@ -1,128 +1,186 @@
 {
-  "pitch": {
-    "theta_deg_start": 90,
-    "t_start": 5.0,
-    "segments": [
-      {
-        "t_end": 14.12,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 85.53
-      },
-      {
-        "t_end": 22.97,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 82.78
-      },
-      {
-        "t_end": 31.83,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 75.27
-      },
-      {
-        "t_end": 40.68,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 65.0
-      },
-      {
-        "t_end": 49.54,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 54.72
-      },
-      {
-        "t_end": 58.39,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 47.19
-      },
-      {
-        "t_end": 67.24,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 44.43
-      },
-      {
-        "t_end": 75.09,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 44.4
-      },
-      {
-        "t_end": 82.93,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 42.71
-      },
-      {
-        "t_end": 90.77,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 36.53
-      },
-      {
-        "t_end": 100.17,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 23.98
-      },
-      {
-        "t_end": 109.57,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 9.6
-      },
-      {
-        "t_end": 120.07,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 9.6
-      },
-      {
-        "t_end": 130.58,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 9.6
-      },
-      {
-        "t_end": 141.08,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 9.49
-      },
-      {
-        "t_end": 151.58,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 6.47
-      },
-      {
-        "t_end": 160.57,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 6.47
-      },
-      {
-        "t_end": 169.57,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 6.47
-      },
-      {
-        "t_end": 178.56,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 6.47
-      },
-      {
-        "t_end": 187.56,
-        "shape": "hermite",
-        "k": 1.0,
-        "theta_deg": 6.46
-      }
-    ]
+ "stages": [
+  {
+   "m0": 29708,
+   "m_fuel": 19910,
+   "burn_time": 66.2,
+   "isp_sl": 225.7,
+   "isp_vac": 252.747,
+   "dm": 1.57,
+   "part": "all",
+   "powered": true,
+   "controlled": true
+  },
+  {
+   "m0": 8546,
+   "m_fuel": 5727,
+   "burn_time": 40.9,
+   "isp_sl": 221.493,
+   "isp_vac": 265.751,
+   "dm": 1.25,
+   "part": "stage2up",
+   "powered": true,
+   "controlled": true
+  },
+  {
+   "m0": 2419,
+   "m_fuel": 1621,
+   "burn_time": 35.1,
+   "isp_sl": 221.493,
+   "isp_vac": 275.219,
+   "dm": 1.09,
+   "part": "stage3up",
+   "powered": true,
+   "controlled": true
+  },
+  {
+   "m0": 620,
+   "m_fuel": 0.0,
+   "burn_time": 3000.0,
+   "isp_sl": 0.0,
+   "isp_vac": 0.0,
+   "dm": 0.54,
+   "part": "head",
+   "powered": false,
+   "controlled": false
   }
+ ],
+ "pitch": {
+  "theta_deg_start": 90,
+  "t_start": 5.000004092523834,
+  "segments": [
+   {
+    "t_end": 5.822126855291437,
+    "shape": "hermite",
+    "k": -0.4970037846086519,
+    "theta_deg": 88.2888381911502
+   },
+   {
+    "t_end": 21.900582714664804,
+    "shape": "hermite",
+    "k": -0.38005766545983216,
+    "theta_deg": 81.47298104267534
+   },
+   {
+    "t_end": 28.005003475366873,
+    "shape": "hermite",
+    "k": -1.4138430365769101,
+    "theta_deg": 68.56820886805764
+   },
+   {
+    "t_end": 32.43465545670562,
+    "shape": "hermite",
+    "k": -1.3118298038690765,
+    "theta_deg": 63.20622748054897
+   },
+   {
+    "t_end": 44.30065859179446,
+    "shape": "hermite",
+    "k": -1.2188463168910095,
+    "theta_deg": 48.188204280134606
+   },
+   {
+    "t_end": 53.437696938515344,
+    "shape": "hermite",
+    "k": -0.9297210812071182,
+    "theta_deg": 37.85928655931029
+   },
+   {
+    "t_end": 57.179214290739,
+    "shape": "hermite",
+    "k": -0.2206919152334083,
+    "theta_deg": 34.50017959218418
+   },
+   {
+    "t_end": 59.915943305063465,
+    "shape": "hermite",
+    "k": -0.6037010827480238,
+    "theta_deg": 32.36155069970009
+   },
+   {
+    "t_end": 65.92062263150837,
+    "shape": "hermite",
+    "k": 2.2245144611198566,
+    "theta_deg": 35.772889854684664
+   },
+   {
+    "t_end": 70.58290420412796,
+    "shape": "hermite",
+    "k": -1.143568182731681,
+    "theta_deg": 28.531257517681993
+   },
+   {
+    "t_end": 81.84047183212019,
+    "shape": "hermite",
+    "k": -0.19980300845372986,
+    "theta_deg": 23.548524201394386
+   },
+   {
+    "t_end": 85.17063848412675,
+    "shape": "hermite",
+    "k": -0.1906654228983344,
+    "theta_deg": 22.990507963203896
+   },
+   {
+    "t_end": 90.83097463961927,
+    "shape": "hermite",
+    "k": -0.056765488903786174,
+    "theta_deg": 21.775027411047002
+   },
+   {
+    "t_end": 92.83019432410063,
+    "shape": "hermite",
+    "k": -1.1164851443518367,
+    "theta_deg": 21.974129857104202
+   },
+   {
+    "t_end": 105.66703371182348,
+    "shape": "hermite",
+    "k": 0.19757868689098115,
+    "theta_deg": 16.184020388814435
+   },
+   {
+    "t_end": 107.1,
+    "shape": "hermite",
+    "k": -0.31026161490337356,
+    "theta_deg": 16.50005696793182
+   },
+   {
+    "t_end": 110.25952478637971,
+    "shape": "hermite",
+    "k": -0.2799071255018946,
+    "theta_deg": 16.34613464432297
+   },
+   {
+    "t_end": 122.20779048867642,
+    "shape": "hermite",
+    "k": -0.392570466664887,
+    "theta_deg": 14.36703256507889
+   },
+   {
+    "t_end": 128.03227929223627,
+    "shape": "hermite",
+    "k": 0.20047209020721682,
+    "theta_deg": 16.441838661805924
+   },
+   {
+    "t_end": 132.90323688106727,
+    "shape": "hermite",
+    "k": 0.3443831164514716,
+    "theta_deg": 14.350672057742125
+   },
+   {
+    "t_end": 135.47919994408352,
+    "shape": "hermite",
+    "k": -0.2738013601851334,
+    "theta_deg": 15.964566868986656
+   },
+   {
+    "t_end": 142.2,
+    "shape": "hermite",
+    "k": 0.012663348011325301,
+    "theta_deg": 11.0579836592642
+   }
+  ]
+ }
 }
