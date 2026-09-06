@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"traj"
 	"traj/aero"
 	"traj/atmosphere"
@@ -38,14 +39,13 @@ func main() {
 
 	// Init model
 	model := traj.InitModel(r, aero)
-	tChar := make([]float64, 0)
-	for i, st := range r.Stages {
-		if i > 0 {
-			tChar = append(tChar, tChar[i-1]+st.BurnTime)
-		} else {
-			tChar = append(tChar, st.BurnTime)
-		}
+	tChar := []float64{}
+	t := 0.
+	for _, st := range r.Stages {
+		t += st.BurnTime
+		tChar = append(tChar, t)
 	}
+	slices.Sort(tChar)
 	stop := func(x float64, y ...float64) (half bool, stop bool) {
 		h := traj.Altitude(y...)
 		if traj.Eq(h, 0, 1e-9) {
