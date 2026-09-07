@@ -47,8 +47,12 @@ LIMITS = {
 # vector: [theta_deg x N | w x N-1 | k x N | t_start]; the arcs tile
 # [t_start, t_powered] in proportion to w, the last arc's weight pinned at 1.
 # k is an arc's exit slope in deg/s, boxed by the §4.4 rate limit; the cubic's
-# interior can still overshoot it, which the pitch_rate penalty catches
-BOUNDS = {"theta": (5, 89), "w": (0.1, 10), "k": (-3, 3), "t_start": (5, 40)}
+# interior can still overshoot it, which the pitch_rate penalty catches.
+# w's floor is what stops an arc the 0.1 s integration step cannot resolve, and
+# 0.03 of the last arc is about two steps. It has to stay this low: the seed's
+# separation trim is 0.28 s, and a 0.1 floor cannot represent it at all -- pycma
+# raises on the seed rather than clipping it.
+BOUNDS = {"theta": (5, 89), "w": (0.03, 10), "k": (-3, 3), "t_start": (5, 40)}
 STDS = {"theta": 10, "w": 0.5, "k": 1, "t_start": 5}
 
 

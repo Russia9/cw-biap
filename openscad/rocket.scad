@@ -22,7 +22,7 @@
 $fn = 360;
 
 // ---- Export selection (override via -D on the CLI) ----
-PART  = "all";   // "all" | "stage2up" | "stage3up" | "head"
+PART  = "head";   // "all" | "stage2up" | "stage3up" | "head"
 SCALE = 1;       // 1 = metres (model units); 1000 = millimetres
 
 eps = 0.003;     // small overlap so stacked sections fuse into one manifold solid
